@@ -163,11 +163,11 @@ public class ByteStreamService extends ByteStreamImplBase {
 
   private static void handleDecompression(ReadResponse response, Compressor.Value compressor) {
     if (compressor == Compressor.Value.ZSTD) {
-      response =
-          ReadResponse.newBuilder()
-              .setData(CompressionUtils.zstdDecompress(response.getData()))
-              .build();
+      return ReadResponse.newBuilder()
+          .setData(CompressionUtils.zstdDecompress(response.getData()))
+          .build();
     }
+    return response;
   }
 
   ServerCallStreamObserver<ReadResponse> onErrorLogReadObserver(
@@ -181,7 +181,7 @@ public class ByteStreamService extends ByteStreamImplBase {
 
       @Override
       public void onNext(ReadResponse response) {
-        handleDecompression(response, compressor);
+        response = handleDecompression(response, compressor);
         delegate.onNext(response);
         responseCount++;
         responseBytes += response.getData().size();
