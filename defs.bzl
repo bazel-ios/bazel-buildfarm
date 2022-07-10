@@ -72,7 +72,7 @@ def buildfarm_init(name = "buildfarm"):
     maven_install(
         artifacts = ["com.amazonaws:aws-java-sdk-%s:1.11.729" % module for module in COM_AWS_MODULES] +
                     [
-                        "com.fasterxml.jackson.core:jackson-databind:2.9.8",
+                        "com.fasterxml.jackson.core:jackson-databind:2.13.3",
                         "com.github.ben-manes.caffeine:caffeine:2.9.0",
                         "com.github.docker-java:docker-java:3.2.11",
                         "com.github.jnr:jffi:1.2.16",
@@ -86,7 +86,7 @@ def buildfarm_init(name = "buildfarm"):
                         "com.google.auth:google-auth-library-credentials:0.9.1",
                         "com.google.auth:google-auth-library-oauth2-http:0.9.1",
                         "com.google.code.findbugs:jsr305:3.0.1",
-                        "com.google.code.gson:gson:2.8.6",
+                        "com.google.code.gson:gson:2.9.0",
                         "com.google.errorprone:error_prone_annotations:2.9.0",
                         "com.google.errorprone:error_prone_core:0.92",
                         "com.google.guava:failureaccess:1.0.1",
@@ -102,26 +102,27 @@ def buildfarm_init(name = "buildfarm"):
                         "io.github.lognet:grpc-spring-boot-starter:4.5.4",
                         "org.bouncycastle:bcprov-jdk15on:1.70",
                         "net.jcip:jcip-annotations:1.0",
-                    ] + ["io.netty:netty-%s:4.1.65.Final" % module for module in IO_NETTY_MODULES] +
+                    ] + ["io.netty:netty-%s:4.1.68.Final" % module for module in IO_NETTY_MODULES] +
                     ["io.grpc:grpc-%s:1.38.0" % module for module in IO_GRPC_MODULES] +
                     [
                         "io.prometheus:simpleclient:0.10.0",
                         "io.prometheus:simpleclient_hotspot:0.10.0",
                         "io.prometheus:simpleclient_httpserver:0.10.0",
-                        "junit:junit:4.12",
+                        "junit:junit:4.13.1",
                         "net.javacrumbs.future-converter:future-converter-java8-guava:1.2.0",
                         "org.apache.commons:commons-compress:1.21",
                         "org.apache.commons:commons-pool2:2.9.0",
                         "org.apache.commons:commons-lang3:3.12.0",
                         "commons-io:commons-io:2.11.0",
+                        "me.dinowernli:java-grpc-prometheus:0.5.0",
                         "org.apache.tomcat:annotations-api:6.0.53",
                         "org.checkerframework:checker-qual:2.5.2",
                         "org.mockito:mockito-core:2.25.0",
                         "org.openjdk.jmh:jmh-core:1.23",
                         "org.openjdk.jmh:jmh-generator-annprocess:1.23",
                         "org.redisson:redisson:3.13.1",
-                    ] + ["org.springframework.boot:%s:2.1.3.RELEASE" % module for module in ORG_SPRING_BOOT_MODULES] +
-                    ["org.springframework:%s:4.3.14.RELEASE" % module for module in ORG_SPRING_MODULES] +
+                    ] + ["org.springframework.boot:%s:2.7.0" % module for module in ORG_SPRING_BOOT_MODULES] +
+                    ["org.springframework:%s:5.3.20" % module for module in ORG_SPRING_MODULES] +
                     [
                         "org.threeten:threetenbp:1.3.3",
                         "org.xerial:sqlite-jdbc:3.34.0",
