@@ -103,6 +103,17 @@ tasks:
     - export EXECUTION_STAGE_WIDTH=5
     - ./.bazelci/integration_test.sh
 
+  # Test that buildfarm can work with zstd compression
+  compression_test_many_shard:
+    name: "Compression Test"
+    platform: ubuntu1804
+    shell_commands:
+    - export TEST_SHARD=true
+    - export RUN_TEST=./.bazelci/run_generative_cc_many_test.sh
+    - export TEST_ARG1=--experimental_remote_cache_compression
+    - export EXECUTION_STAGE_WIDTH=5
+    - ./.bazelci/integration_test.sh
+
   # In the same way that clients will want to verify their cache hit rates / latencies.
   # We as service owners will want a way to verify that our cache hit rate is correct and
   # that latencies can be captured.
