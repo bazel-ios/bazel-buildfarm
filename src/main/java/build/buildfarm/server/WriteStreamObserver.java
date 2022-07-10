@@ -298,7 +298,7 @@ class WriteStreamObserver implements StreamObserver<WriteRequest> {
     return write.getCommittedSize();
   }
 
-  private static void handleCompression(ByteString data, Compressor.Value compressor) {
+  private static ByteString handleCompression(ByteString data, Compressor.Value compressor) {
     if (compressor == Compressor.Value.ZSTD) {
       return CompressionUtils.zstdCompress(data);
     }
