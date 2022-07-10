@@ -31,7 +31,7 @@ tasks:
     - export BUILDFARM_GATE_LCOV_RESULTS=true
     - ./generate_coverage.sh
 
-  # Typical unit tests that run across a variety of operation systems.
+  # Typical unit tests that run across a variety of operating systems.
   ubuntu1604:
     name: "Unit Tests"
     build_targets:
