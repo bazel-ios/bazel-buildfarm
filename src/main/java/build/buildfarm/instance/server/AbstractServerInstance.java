@@ -1848,6 +1848,12 @@ public abstract class AbstractServerInstance implements Instance {
             ActionCacheUpdateCapabilities.newBuilder().setUpdateEnabled(true))
         .setMaxBatchTotalSizeBytes(Size.mbToBytes(4))
         .setSymlinkAbsolutePathStrategy(SymlinkAbsolutePathStrategy.Value.DISALLOWED)
+
+        // Compression support
+        .addSupportedCompressors(Compressor.Value.IDENTITY)
+        .addSupportedCompressors(Compressor.Value.ZSTD)
+        .addSupportedBatchUpdateCompressors(Compressor.Value.IDENTITY)
+        .addSupportedBatchUpdateCompressors(Compressor.Value.ZSTD)
         .build();
   }
 
