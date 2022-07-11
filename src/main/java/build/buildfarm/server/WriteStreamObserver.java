@@ -435,7 +435,7 @@ class WriteStreamObserver implements StreamObserver<WriteRequest> {
     }
     
     if (compressor == Compressor.Value.ZSTD){
-      return new ZstdDecompressingOutputStream((OutputStream)out);
+      return new ZstdDecompressingOutputStream(out);
     }
     return out;
   }
