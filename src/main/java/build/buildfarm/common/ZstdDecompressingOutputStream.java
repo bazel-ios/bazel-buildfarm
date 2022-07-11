@@ -19,9 +19,10 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import build.buildfarm.common.io.FeedbackOutputStream;
 
 /** An {@link OutputStream} that use zstd to decompress the content. */
-public final class ZstdDecompressingOutputStream extends OutputStream {
+public final class ZstdDecompressingOutputStream extends FeedbackOutputStream {
   private final OutputStream out;
   private ByteArrayInputStream inner;
   private final ZstdInputStreamNoFinalizer zis;
@@ -73,4 +74,10 @@ public final class ZstdDecompressingOutputStream extends OutputStream {
   public void closeShallow() throws IOException {
     zis.close();
   }
+  
+  @Override
+  public boolean isReady(){
+    return true;
+  }
+  
 }

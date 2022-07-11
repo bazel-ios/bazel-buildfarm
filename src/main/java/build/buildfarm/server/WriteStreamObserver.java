@@ -34,6 +34,7 @@ import build.buildfarm.common.Write;
 import build.buildfarm.common.grpc.TracingMetadataUtils;
 import build.buildfarm.common.io.FeedbackOutputStream;
 import build.buildfarm.common.resources.ResourceParser;
+import build.buildfarm.common.ZstdDecompressingOutputStream;
 import build.buildfarm.instance.Instance;
 import com.google.bytestream.ByteStreamProto.WriteRequest;
 import com.google.bytestream.ByteStreamProto.WriteResponse;
@@ -52,6 +53,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.annotation.concurrent.GuardedBy;
+import java.io.OutputStream;
 
 class WriteStreamObserver implements StreamObserver<WriteRequest> {
   private static final Logger logger = Logger.getLogger(WriteStreamObserver.class.getName());
@@ -344,7 +346,7 @@ class WriteStreamObserver implements StreamObserver<WriteRequest> {
         earliestOffset = offset;
       }
 
-      data = handleDecompression(data, compressor);
+      //data = handleDecompression(data, compressor);
 
       // we may have a committedSize that is larger than our offset, in which case we want
       // to skip the data bytes until the committedSize. This is practical with our streams,
@@ -430,6 +432,10 @@ class WriteStreamObserver implements StreamObserver<WriteRequest> {
   private FeedbackOutputStream getOutput() throws IOException {
     if (out == null) {
       out = write.getOutput(deadlineAfter, deadlineAfterUnits, this::onNewlyReadyRequestNext);
+    }
+    
+    if (compressor == Compressor.Value.ZSTD){
+      return new ZstdDecompressingOutputStream((OutputStream)out);
     }
     return out;
   }
