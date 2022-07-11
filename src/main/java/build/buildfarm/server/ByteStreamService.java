@@ -255,7 +255,7 @@ public class ByteStreamService extends ByteStreamImplBase {
             format(
                 "%s(%s)",
                 DigestUtil.toString(downloadBlobRequest.getBlob().getDigest()), instance.getName()),
-            Compressor.Value.IDENTITY,
+            downloadBlobRequest.getBlob().getCompression(),
             offset,
             (ServerCallStreamObserver<ReadResponse>) responseObserver);
     try {
