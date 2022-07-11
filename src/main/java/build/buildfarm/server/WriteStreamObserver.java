@@ -298,9 +298,9 @@ class WriteStreamObserver implements StreamObserver<WriteRequest> {
     return write.getCommittedSize();
   }
 
-  private static ByteString handleCompression(ByteString data, Compressor.Value compressor) {
+  private static ByteString handleDecompression(ByteString data, Compressor.Value compressor) {
     if (compressor == Compressor.Value.ZSTD) {
-      return CompressionUtils.zstdCompress(data);
+      return CompressionUtils.zstdDecompress(data);
     }
     return data;
   }
@@ -344,7 +344,7 @@ class WriteStreamObserver implements StreamObserver<WriteRequest> {
         earliestOffset = offset;
       }
 
-      data = handleCompression(data, compressor);
+      data = handleDecompression(data, compressor);
 
       // we may have a committedSize that is larger than our offset, in which case we want
       // to skip the data bytes until the committedSize. This is practical with our streams,

@@ -161,11 +161,11 @@ public class ByteStreamService extends ByteStreamImplBase {
     target.setOnReadyHandler(new ReadFromOnReadyHandler());
   }
 
-  private static ReadResponse handleDecompression(
+  private static ReadResponse handleCompression(
       ReadResponse response, Compressor.Value compressor) {
     if (compressor == Compressor.Value.ZSTD) {
       return ReadResponse.newBuilder()
-          .setData(CompressionUtils.zstdDecompress(response.getData()))
+          .setData(CompressionUtils.zstdCompress(response.getData()))
           .build();
     }
     return response;
@@ -182,7 +182,7 @@ public class ByteStreamService extends ByteStreamImplBase {
 
       @Override
       public void onNext(ReadResponse response) {
-        response = handleDecompression(response, compressor);
+        response = handleCompression(response, compressor);
         delegate.onNext(response);
         responseCount++;
         responseBytes += response.getData().size();
