@@ -12,6 +12,7 @@ load("@io_grpc_grpc_java//:repositories.bzl", "grpc_java_repositories")
 load("@com_google_protobuf//:protobuf_deps.bzl", "protobuf_deps")
 load("@com_grail_bazel_toolchain//toolchain:rules.bzl", "llvm_toolchain")
 load("@io_bazel_rules_k8s//k8s:k8s.bzl", "k8s_repositories")
+load("@io_bazel_rules_go//go:deps.bzl", "go_register_toolchains", "go_rules_dependencies")
 
 IO_NETTY_MODULES = [
     "buffer",
@@ -145,6 +146,10 @@ def buildfarm_init(name = "buildfarm"):
     protobuf_deps()
 
     grpc_java_repositories()
+
+    go_rules_dependencies()
+
+    go_register_toolchains(version = "1.18.2")
 
     k8s_repositories()
 
