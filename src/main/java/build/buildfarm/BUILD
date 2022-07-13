@@ -1,5 +1,6 @@
 load("@io_bazel_rules_docker//container:container.bzl", "container_image")
 load("//:defs.bzl", "ensure_accurate_metadata")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 
 package(
     default_visibility = ["//src:__subpackages__"],
@@ -61,6 +62,19 @@ java_binary(
     visibility = ["//visibility:public"],
     runtime_deps = [
         "//src/main/java/build/buildfarm/worker/shard",
+    ],
+)
+
+# Note: need to run it with 
+# 
+# java -cp buildfarm-shard-worker_deploy.jar build.buildfarm.worker.shard.Worker
+
+pkg_tar(
+    name = "buildfarm-shard-worker-tar",
+    srcs = [
+        ":buildfarm-shard-worker_deploy.jar",
+        ":configs",
+        "//examples:example_configs",
     ],
 )
 

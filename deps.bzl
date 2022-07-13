@@ -21,6 +21,11 @@ def archive_dependencies(third_party):
             "sha256": "685052b498b6ddfe562ca7a97736741d87916fe536623afb7da2824c0211c369",
             "url": "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.33.0/rules_go-v0.33.0.zip",
         },
+        {
+            "name": "rules_pkg",
+            "sha256": "8a298e832762eda1830597d64fe7db58178aa84cd5926d76d5b744d6558941c2",
+            "url": "https://mirror.bazel.build/github.com/bazelbuild/rules_pkg/releases/download/0.7.0/rules_pkg-0.7.0.tar.gz",
+        },
         # Kubernetes rules.  Useful for local development with tilt.
         {
             "name": "io_bazel_rules_k8s",
