@@ -342,6 +342,7 @@ class CASFileCacheTest {
     Path dirPath =
         getInterruptiblyOrIOException(
             fileCache.putDirectory(dirDigest, directoriesIndex, putService));
+    System.out.println("BUILT FetchableDir" + dirDigest);
     return dirPath;
   }
 
@@ -372,13 +373,15 @@ class CASFileCacheTest {
     //
     // Action 2 { foo, straw }
     //
-    byte[] fooData = new byte[500];
+    byte[] fooData = new byte[250];
     ByteString fooBlob = ByteString.copyFrom(fooData);
     Digest fooDigest = DIGEST_UTIL.compute(fooBlob);
     blobs.put(fooDigest, fooBlob);
     String fooKey = fileCache.getKey(fooDigest, false);
+
     Path fooPath = fileCache.getPath(fooKey);
-    fileCache.put(fooDigest, false);
+    // foo is not loaded
+    //fileCache.put(fooDigest, false);
 
     when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(fooDigest), eq(0L)))
         .thenReturn(fooBlob.newInput());
@@ -399,6 +402,7 @@ class CASFileCacheTest {
     blobs.put(strawDigest, strawBlob);
     String strawKey = fileCache.getKey(strawDigest, false);
     Path strawPath = fileCache.getPath(strawKey);
+    // note: straw is not loaded
     //when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(strawDigest), eq(0L)))
     //    .thenReturn(strawBlob.newInput());
 
@@ -410,6 +414,8 @@ class CASFileCacheTest {
 
 
     AtomicBoolean started0 = new AtomicBoolean(false);
+
+    AtomicInteger producerCt = new AtomicInteger(0);
     AtomicBoolean started1 = new AtomicBoolean(false);
     AtomicBoolean started2 = new AtomicBoolean(false);
 /*
@@ -447,7 +453,11 @@ class CASFileCacheTest {
 		  //
 		  // Utilize [foo, bar]
 
+		  Path fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
+
 		  System.out.println("XXX BAR" + barPath);
+		  decrementReference(fooPath);
+		  decrementReference(fooDirPath);
 		  decrementReference(barPath);
 		  //MICROSECONDS.sleep(1000);
 		  //decrementReference(fooPath);
@@ -457,6 +467,9 @@ class CASFileCacheTest {
 		  System.out.println("Exception1" + e);
 
 	      }
+
+	      producerCt.getAndIncrement();
+
               //fileCache.put(strawDigest, false);
               System.out.println("didPut1");
               started1.set(true);
@@ -487,31 +500,26 @@ class CASFileCacheTest {
 		  return null;
 	      }
 
-
 */
 	      String fileName = "strawRef";
 	      Path dirPath = null;
 		try {
 		    dirPath = buildFetchableDir(strawDigest, fileName, "straw.dir");
-		    System.out.println("BUILT DIR" + strawDigest);
+
+		    Path fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
 		} catch (Exception e) {
-		    System.out.println("DIR BURNED");
+		    System.out.println("Exception DIR BURNED");
 		    e.printStackTrace(System.out);
 	      }
-
               if(!Files.isDirectory(dirPath)) {
 		  System.out.println("XXX missing dirPath" + dirPath);
 		  return null;
-
 	      }
-
 	      Path resolvedPath = dirPath.resolve(fileName);
 	      if(!Files.exists(resolvedPath)) {
 		  System.out.println("XXX missing resolvedPath" + resolvedPath + "digest:" + strawDigest);
 		  return null;
 	      }
-
-	      MICROSECONDS.sleep(1000);
 	      if(!Files.exists(strawPath)) {
 		  System.out.println("XXX missing strawPath" + strawPath);
 		  return null;
@@ -525,7 +533,7 @@ class CASFileCacheTest {
             });
 
     int  i = 0;
-    while (!started0.get() || !started1.get() || !started2.get()) {
+    while (!started0.get() || producerCt.get() != 1 || !started2.get()) {
       //System.out.println("testWait");
       MICROSECONDS.sleep(1000);
       if ( i++ > 600) {
@@ -533,7 +541,7 @@ class CASFileCacheTest {
       }
     }
     assertThat(started2.get()).isTrue();
-    //assertThat(started1.get()).isTrue();
+    assertThat(producerCt.get() == 1).isTrue();
 
     /*
     assertThat(Files.exists(barPath)).isFalse();
