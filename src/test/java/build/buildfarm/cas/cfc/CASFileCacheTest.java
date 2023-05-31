@@ -284,17 +284,21 @@ class CASFileCacheTest {
     blobs.put(bigDigest, bigBlob);
 
 
-    String expiringKey = fileCache.getKey(bigDigest, /* isExecutable=*/ false);
-    ImmutableList.Builder<String> keysBuilder = new ImmutableList.Builder<>();
-    keysBuilder.add(expiringKey);
-    //fileCache.incrementKeys(keysBuilder.build());
-    Path bigPath = fileCache.put(bigDigest, false);
-
-
     byte[] strawData = new byte[30]; // take us beyond our 1024 limit
     ByteString strawBlob = ByteString.copyFrom(strawData);
     Digest strawDigest = DIGEST_UTIL.compute(strawBlob);
     blobs.put(strawDigest, strawBlob);
+
+
+
+    String expiringKey = fileCache.getKey(bigDigest, /* isExecutable=*/ false);
+    ImmutableList.Builder<String> keysBuilder = new ImmutableList.Builder<>();
+    keysBuilder.add(expiringKey);
+    keysBuilder.add(fileCache.getKey(strawDigest, /* isExecutable=*/ false));
+    fileCache.incrementKeys(keysBuilder.build());
+    Path bigPath = fileCache.put(bigDigest, false);
+
+
 
     AtomicBoolean started1 = new AtomicBoolean(false);
 
@@ -330,12 +334,16 @@ class CASFileCacheTest {
       System.out.println("testWait");
       MICROSECONDS.sleep(10);
     }
+    //decrementReference(bigPath);
 
 
     String strawKey = fileCache.getKey(strawDigest, false);
     Path strawPath = fileCache.getPath(strawKey);
 
     assertThat(Files.exists(bigPath)).isTrue();
+
+    assertThat(storage.containsKey(strawKey)).isFalse();
+
     assertThat(Files.exists(strawPath)).isFalse();
   }
 

@@ -1772,7 +1772,14 @@ public abstract class CASFileCache implements ContentAddressableStorage {
         return null;
       }
     }
-    return header.after;
+
+    Entry end = header.after;
+    // edge: one single one thing inside of the CAS we shouldn't expire
+    if (getLockedReferenceCount(end) >= 0) {
+	return null;
+    }
+    System.out.println("END:" + end.key);
+    return end;
   }
 
   @SuppressWarnings("NonAtomicOperationOnVolatileField")
@@ -1876,12 +1883,16 @@ public abstract class CASFileCache implements ContentAddressableStorage {
     synchronized (this) {
       Integer keyCt = keyReferences.get(e.key);
       int refCt = e.referenceCount;
+      //if (true) {
       if (keyCt == null) {
+        log.log(Level.SEVERE, format("NULL KEY %s %d", e.key, 0 + keyCt));
         return refCt;
       } else {
         // When the Entry is in an unreferenced sate state ( refCt == -1 ) -
         // we don't want to subtract from this value
-        return keyCt + Math.min(Math.max(refCt, 0), 0);
+	int ret = Math.min(Math.max(keyCt, refCt), 1);
+        log.log(Level.SEVERE, String.format("NULLx KEY %s %d ret ", e.key, ret));
+	return ret;
       }
     }
   }
@@ -1901,6 +1912,8 @@ public abstract class CASFileCache implements ContentAddressableStorage {
                 + e.referenceCount
                 + " references");
       }
+
+      log.log(Level.SEVERE, format("EXPIRE ENTRY KEY %s %d", e.key, 0));
       boolean interrupted = false;
       try {
         expireEntryFallback(e);
@@ -2170,10 +2183,16 @@ public abstract class CASFileCache implements ContentAddressableStorage {
     getDirectoryKeys(keysBuilder, path, directoryDigest, directoriesIndex);
 
     Iterable<String> keys = keysBuilder.build();
+    incrementKeys(keys);
+    return keys;
+  }
+
+
+  @VisibleForTesting
+  public void incrementKeys(Iterable<String> keys) {
     synchronized (this) {
       incrementKeysSynchronized(keys);
     }
-    return keys;
   }
 
   private void incrementKeysSynchronized(Iterable<String> keys) {
@@ -2183,7 +2202,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
         referenceCount = 0;
       }
       log.log(
-          Level.FINER,
+          Level.INFO,
           "incrementing key references to "
               + key
               + " from "
