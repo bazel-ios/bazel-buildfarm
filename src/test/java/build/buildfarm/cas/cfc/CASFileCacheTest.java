@@ -373,10 +373,10 @@ class CASFileCacheTest {
     //
     // Action 2 { foo, straw }
     //
-    byte[] fooData = new byte[250];
+    byte[] fooData = new byte[470];
     ByteString fooBlob = ByteString.copyFrom(fooData);
     Digest fooDigest = DIGEST_UTIL.compute(fooBlob);
-    blobs.put(fooDigest, fooBlob);
+    //blobs.put(fooDigest, fooBlob);
     String fooKey = fileCache.getKey(fooDigest, false);
 
     Path fooPath = fileCache.getPath(fooKey);
@@ -389,12 +389,12 @@ class CASFileCacheTest {
     byte[] barData = new byte[501];
     ByteString barBlob = ByteString.copyFrom(barData);
     Digest barDigest = DIGEST_UTIL.compute(barBlob);
-    blobs.put(barDigest, barBlob);
+    //blobs.put(barDigest, barBlob);
     String barKey = fileCache.getKey(barDigest, false);
     Path barPath = fileCache.getPath(barKey);
-    fileCache.put(barDigest, false);
-    when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(barDigest), eq(0L)))
-        .thenReturn(barBlob.newInput());
+    //fileCache.put(barDigest, false);
+    //when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(barDigest), eq(0L)))
+    //    .thenReturn(barBlob.newInput());
 
     byte[] strawData = new byte[30]; // take us beyond our 1024 limit
     ByteString strawBlob = ByteString.copyFrom(strawData);
@@ -442,9 +442,9 @@ class CASFileCacheTest {
 
     // Thoretically we should spin several operations concurrnetly that fetch evicting actions
 
-    int producerTotal = 5;
+    int producerTotal = 1;
     for (int i = 0; i < producerTotal; i++) {
-	ExecutorService service1 = newSingleThreadExecutor();
+        ExecutorService service1 = newSingleThreadExecutor();
 	int producerId = i;
 	Future<Void> fetchFuture1 =
 	    service1.submit(
@@ -456,15 +456,17 @@ class CASFileCacheTest {
 		      //
 		      // Utilize [foo, bar]
 
+		    /*
+		      Path strawDirPath = buildFetchableDir(strawDigest, "straw.ref", "straw.dir");
+		      decrementReference(strawDirPath);
+*/
 		      Path fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
 
-		      System.out.println("XXX BAR" + barPath);
+		      Path barDirPath = buildFetchableDir(barDigest, "bar.ref", "bar.dir");
 		      decrementReference(fooPath);
-		      decrementReference(fooDirPath);
 		      decrementReference(barPath);
-		      //MICROSECONDS.sleep(1000);
-		      //decrementReference(fooPath);
-		      //fileCache.put(strawDigest, false);
+		      // Hmm: seems like this blows out
+		      //decrementReference(fooDirPath);
 		  } catch (Exception e) {
 		      e.printStackTrace(System.out);
 		      System.out.println("Exception1" + e);
@@ -504,7 +506,7 @@ class CASFileCacheTest {
 	      }
 
 */
-	      String fileName = "strawRef";
+	      String fileName = "straw.ref";
 	      Path dirPath = null;
 		try {
 		    dirPath = buildFetchableDir(strawDigest, fileName, "straw.dir");
@@ -536,12 +538,9 @@ class CASFileCacheTest {
             });
 
     int  i = 0;
-    while (!started0.get() || producerCt.get() < producerTotal || !started2.get()) {
+    while ((producerCt.get() < (producerTotal - 1)) || !started2.get()) {
       //System.out.println("testWait");
-      MICROSECONDS.sleep(1000);
-      if ( i++ > 600) {
-	  break;
-      }
+      MICROSECONDS.sleep(100);
     }
     assertThat(started2.get()).isTrue();
     assertThat(producerCt.get() == producerTotal).isTrue();

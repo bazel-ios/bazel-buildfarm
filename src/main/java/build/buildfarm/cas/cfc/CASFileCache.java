@@ -1786,7 +1786,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
     Entry end = header.after;
     // edge: one single one thing inside of the CAS we shouldn't expire
     if (getLockedReferenceCount(end) > 0) {
-        //MILLISECONDS.sleep(1);
+        MILLISECONDS.sleep(1);
 	//log.log(Level.SEVERE, format("wait.end.final.null"));
 	return null;
     }
