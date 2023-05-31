@@ -277,27 +277,141 @@ class CASFileCacheTest {
 
   // jmarino
   @Test
-  public void expireUnreferencedEntryRemovesBlobFile() throws IOException, InterruptedException {
-    byte[] bigData = new byte[1000];
-    ByteString bigBlob = ByteString.copyFrom(bigData);
-    Digest bigDigest = DIGEST_UTIL.compute(bigBlob);
-    blobs.put(bigDigest, bigBlob);
+  public void doesntExpireDuringExecution() throws IOException, InterruptedException {
+    // Simulate an action with foo data and bar data
+    byte[] fooData = new byte[500];
+    ByteString fooBlob = ByteString.copyFrom(fooData);
+    Digest fooDigest = DIGEST_UTIL.compute(fooBlob);
+    blobs.put(fooDigest, fooBlob);
+    String fooKey = fileCache.getKey(fooDigest, false);
+    Path fooPath = fileCache.getPath(fooKey);
+    fileCache.put(fooDigest, false);
 
+    when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(fooDigest), eq(0L)))
+        .thenReturn(fooBlob.newInput());
+
+    byte[] barData = new byte[501];
+    ByteString barBlob = ByteString.copyFrom(barData);
+    Digest barDigest = DIGEST_UTIL.compute(barBlob);
+    blobs.put(barDigest, barBlob);
+    String barKey = fileCache.getKey(barDigest, false);
+    Path barPath = fileCache.getPath(barKey);
+    fileCache.put(barDigest, false);
+    when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(barDigest), eq(0L)))
+        .thenReturn(barBlob.newInput());
 
     byte[] strawData = new byte[30]; // take us beyond our 1024 limit
     ByteString strawBlob = ByteString.copyFrom(strawData);
     Digest strawDigest = DIGEST_UTIL.compute(strawBlob);
     blobs.put(strawDigest, strawBlob);
+    String strawKey = fileCache.getKey(strawDigest, false);
+    Path strawPath = fileCache.getPath(strawKey);
 
-
-
-    String expiringKey = fileCache.getKey(bigDigest, /* isExecutable=*/ false);
     ImmutableList.Builder<String> keysBuilder = new ImmutableList.Builder<>();
-    keysBuilder.add(expiringKey);
-    keysBuilder.add(fileCache.getKey(strawDigest, /* isExecutable=*/ false));
+/*    keysBuilder.add(barKey);
+    keysBuilder.add(fooKey);
+    keysBuilder.add(strawKey);*/
     fileCache.incrementKeys(keysBuilder.build());
-    Path bigPath = fileCache.put(bigDigest, false);
 
+
+    AtomicBoolean started0 = new AtomicBoolean(false);
+    AtomicBoolean started1 = new AtomicBoolean(false);
+    AtomicBoolean started2 = new AtomicBoolean(false);
+
+
+    ExecutorService service1 = newSingleThreadExecutor();
+    Future<Void> fetchFuture1 =
+        service1.submit(
+            () -> {
+              System.out.println("willPut1");
+
+	      try {
+		  Files.delete(barPath);
+		  decrementReference(barPath);
+		  //fileCache.put(strawDigest, false);
+              } catch (Exception e) {
+		  e.printStackTrace(System.out);
+		  System.out.println("Exception1" + e);
+
+	      }
+              //fileCache.put(strawDigest, false);
+              System.out.println("didPut1");
+              started1.set(true);
+              return null;
+            });
+
+    ExecutorService service2 = newSingleThreadExecutor();
+    Future<Void> consumerFuture1 =
+        service2.submit(
+            () -> {
+	      // This future needs to begin a race where it fetches strawData
+              System.out.println("willPut2");
+	      try {
+
+		  fileCache.findMissingBlobs(ImmutableList.of(strawDigest));
+		  fileCache.put(strawDigest, false);
+              } catch (Exception e) {
+		  e.printStackTrace(System.out);
+		  System.out.println("Exception2" + e);
+	      }
+
+	      //decrementReference(fooPath);
+	      //decrementReference(barPath);
+              //fileCache.put(strawDigest, false);
+              System.out.println("didPut2");
+              started2.set(true);
+              return null;
+            });
+    ExecutorService service0 = newSingleThreadExecutor();
+    Future<Void> barConsumerFuture1 =
+        service0.submit(
+            () -> {
+              System.out.println("willPut0");
+	      try {
+		  fileCache.put(strawDigest, false);
+              } catch (Exception e) {
+		  e.printStackTrace(System.out);
+		  System.out.println("Exception2" + e);
+	      }
+              started0.set(true);
+              System.out.println("didPut0");
+              return null;
+            });
+
+
+    int  i = 0;
+    while (!started0.get() || !started1.get() || !started2.get()) {
+      //System.out.println("testWait");
+      MICROSECONDS.sleep(10000);
+      if ( i++ > 200) {
+	  break;
+      }
+    }
+
+    //
+    //assertThat(Files.exists(barPath)).isTrue();
+    assertThat(storage.containsKey(barKey)).isFalse();
+
+    assertThat(Files.exists(fooPath)).isTrue();
+    assertThat(storage.containsKey(fooKey)).isTrue();
+
+
+    //assertThat(fileCache.findMissingBlobs(ImmutableList.of(strawDigest))).isEmpty();
+    //assertThat(Files.exists(strawPath)).isTrue();
+    assertThat(storage.containsKey(strawKey)).isTrue();
+    assertThat(fileCache.contains(strawDigest, null)).isTrue();
+
+/*
+
+
+    ImmutableList.Builder<String> keysBuilder = new ImmutableList.Builder<>();
+    //keysBuilder.add(bigKey);
+    keysBuilder.add(strawKey);
+    fileCache.incrementKeys(keysBuilder.build());
+
+
+    Path strawPath = fileCache.getPath(strawKey);
+    fileCache.put(bigDigest, false);
 
 
     AtomicBoolean started1 = new AtomicBoolean(false);
@@ -337,6 +451,78 @@ class CASFileCacheTest {
     //decrementReference(bigPath);
 
 
+
+    assertThat(Files.exists(bigPath)).isTrue();
+
+    assertThat(storage.containsKey(strawKey)).isFalse();
+
+    assertThat(Files.exists(strawPath)).isFalse();
+    */
+  }
+
+
+  // jmarino: complete this
+  @Test
+  public void expireUnreferencedEntryNeverRemovesFirstBlob() throws IOException, InterruptedException {
+    byte[] bigData = new byte[1000];
+    ByteString bigBlob = ByteString.copyFrom(bigData);
+    Digest bigDigest = DIGEST_UTIL.compute(bigBlob);
+    blobs.put(bigDigest, bigBlob);
+
+
+    byte[] strawData = new byte[30]; // take us beyond our 1024 limit
+    ByteString strawBlob = ByteString.copyFrom(strawData);
+    Digest strawDigest = DIGEST_UTIL.compute(strawBlob);
+    blobs.put(strawDigest, strawBlob);
+
+
+    String expiringKey = fileCache.getKey(bigDigest, /* isExecutable=*/ false);
+    ImmutableList.Builder<String> keysBuilder = new ImmutableList.Builder<>();
+    keysBuilder.add(expiringKey);
+    keysBuilder.add(fileCache.getKey(strawDigest, /* isExecutable=*/ false));
+    fileCache.incrementKeys(keysBuilder.build());
+    Path bigPath = fileCache.put(bigDigest, false);
+
+
+
+    AtomicBoolean started1 = new AtomicBoolean(false);
+
+    Future<Void> putFuture1 =
+        newSingleThreadExecutor().submit(
+            () -> {
+              started1.set(true);
+              System.out.println("willPut1");
+              fileCache.put(strawDigest, false);
+	      // We'll never run this
+              System.out.println("didPut1");
+              return null;
+            });
+    while (!started1.get()) {
+      System.out.println("testWait");
+      MICROSECONDS.sleep(10);
+    }
+
+    // minimal test to ensure that we're blocked
+    assertThat(putFuture1.isDone()).isFalse();
+    decrementReference(bigPath);
+
+    AtomicBoolean started2 = new AtomicBoolean(false);
+    Future<Void> putFuture2 =
+        newSingleThreadExecutor().submit(
+            () -> {
+              started2.set(true);
+              System.out.println("willPut1");
+              fileCache.put(strawDigest, false);
+              System.out.println("didPut1");
+              return null;
+            });
+    while (!started2.get()) {
+      System.out.println("testWait");
+      MICROSECONDS.sleep(10);
+    }
+    //decrementReference(bigPath);
+
+
     String strawKey = fileCache.getKey(strawDigest, false);
     Path strawPath = fileCache.getPath(strawKey);
 
@@ -346,6 +532,9 @@ class CASFileCacheTest {
 
     assertThat(Files.exists(strawPath)).isFalse();
   }
+
+
+
 
   @Test
   public void startEmptyCas() throws IOException, InterruptedException {

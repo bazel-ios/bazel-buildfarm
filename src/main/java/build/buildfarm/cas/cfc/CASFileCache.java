@@ -1657,11 +1657,14 @@ public abstract class CASFileCache implements ContentAddressableStorage {
   @GuardedBy("this")
   private void decrementReferencesSynchronized(
       Iterable<String> inputFiles, Iterable<Digest> inputDirectories) throws IOException {
+     log.log(Level.SEVERE, format("DecRefsSync"));
     // decrement references and notify if any dropped to 0
     // insert after the last 0-reference count entry in list
     int entriesDereferenced = decrementInputReferences(inputFiles);
+     log.log(Level.SEVERE, format("DecRefsSync.2"));
     for (Digest inputDirectory : inputDirectories) {
       DirectoryEntry dirEntry = directoryStorage.get(inputDirectory);
+
       if (dirEntry == null) {
         throw new IllegalStateException(
             "inputDirectory "
@@ -1671,8 +1674,12 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       entriesDereferenced +=
           decrementInputReferences(directoriesIndex.directoryEntries(inputDirectory));
     }
+    log.log(Level.SEVERE, format("DecRefsSync.3"));
     if (entriesDereferenced > 0) {
+	log.log(Level.SEVERE, format("DecRefsSync.end.some"));
       notify();
+    } else {
+	log.log(Level.SEVERE, format("DecRefsSync.end.nothing"));
     }
   }
 
@@ -1714,7 +1721,9 @@ public abstract class CASFileCache implements ContentAddressableStorage {
 
   @GuardedBy("this")
   private Entry waitForLastUnreferencedEntry(long blobSizeInBytes) throws InterruptedException {
+    //log.log(Level.SEVERE, format("waitForLastUnreferencedEntry.begin.some"));
     while (header.after == header) {
+      //log.log(Level.SEVERE, format("waitForLastUnreferencedEntry.loop.some"));
       int references = 0;
       int keys = 0;
       int min = -1;
@@ -1769,16 +1778,19 @@ public abstract class CASFileCache implements ContentAddressableStorage {
               blobSizeInBytes, sizeInBytes, keys, references, min, minkey, max, maxkey));
       wait();
       if (sizeInBytes <= maxSizeInBytes) {
+        log.log(Level.SEVERE, format("wait.end.null"));
         return null;
       }
     }
 
     Entry end = header.after;
     // edge: one single one thing inside of the CAS we shouldn't expire
-    if (getLockedReferenceCount(end) >= 0) {
+    if (getLockedReferenceCount(end) > 0) {
+        //MILLISECONDS.sleep(1);
+	//log.log(Level.SEVERE, format("wait.end.final.null"));
 	return null;
     }
-    System.out.println("END:" + end.key);
+    log.log(Level.SEVERE, format("wait.end.some"));
     return end;
   }
 
@@ -1885,7 +1897,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       int refCt = e.referenceCount;
       //if (true) {
       if (keyCt == null) {
-        log.log(Level.SEVERE, format("NULL KEY %s %d", e.key, 0 + keyCt));
+        //log.log(Level.SEVERE, format("NULL KEY %s %d", e.key, 0 + refCt));
         return refCt;
       } else {
         // When the Entry is in an unreferenced sate state ( refCt == -1 ) -
@@ -2250,7 +2262,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
     // Claim the directory path so no other threads try to create/delete it.
     Path path = getDirectoryPath(digest);
     Lock l = locks.acquire(path);
-    log.log(Level.FINE, format("locking directory %s", path.getFileName()));
+    log.log(Level.INFO, format("locking directory %s", path.getFileName()));
     try {
       l.lockInterruptibly();
     } catch (InterruptedException e) {
@@ -2352,7 +2364,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
   private ListenableFuture<Path> putDirectorySynchronized(
       Path path, Digest digest, Map<Digest, Directory> directoriesByDigest, ExecutorService service)
       throws IOException {
-    log.log(Level.FINE, format("directory %s has been locked", path.getFileName()));
+    log.log(Level.INFO, format("directory %s has been locked", path.getFileName()));
     ListenableFuture<Void> expireFuture;
     synchronized (this) {
       DirectoryEntry e = directoryStorage.get(digest);
@@ -2390,9 +2402,10 @@ public abstract class CASFileCache implements ContentAddressableStorage {
                   path.getFileName()));
         }
 
+        log.log(Level.INFO, format("will expiring existing entry for %s", path.getFileName()));
         decrementReferencesSynchronized(inputsBuilder.build(), ImmutableList.of());
         expireFuture = expireDirectory(digest, service);
-        log.log(Level.FINE, format("expiring existing entry for %s", path.getFileName()));
+        log.log(Level.INFO, format("expiring existing entry for %s", path.getFileName()));
       }
     }
 
@@ -2536,6 +2549,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
   @SuppressWarnings("ThrowFromFinallyBlock")
   Path putAndCopy(Digest digest, boolean isExecutable) throws IOException, InterruptedException {
     String key = getKey(digest, isExecutable);
+    System.out.println("PutAndCopy" + digest);
     CancellableOutputStream out =
         putImpl(
             Compressor.Value.IDENTITY, // first place to try internal compression
@@ -3306,6 +3320,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
   }
 
   private void expireEntryFallback(Entry e) throws IOException {
+    log.log(Level.SEVERE, String.format("expireEntryFallback %s", e.key));
     if (delegate != null) {
       FileEntryKey fileEntryKey = parseFileEntryKey(e.key, e.size);
       if (fileEntryKey == null) {
@@ -3319,6 +3334,9 @@ public abstract class CASFileCache implements ContentAddressableStorage {
                 RequestMetadata.getDefaultInstance());
         performCopy(write, e);
       }
+    } else {
+
+	log.log(Level.SEVERE, String.format("expireEntryFallback.noDelegate %s", e.key));
     }
   }
 
