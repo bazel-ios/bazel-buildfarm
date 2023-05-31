@@ -2797,7 +2797,12 @@ public abstract class CASFileCache implements ContentAddressableStorage {
   // correctness in the most excessive contention for space facing under slow
   // disk i/o
   private final void deleteFilePath(Path path) throws IOException {
-    log.log(Level.FINEST, "CASFileCache::deleteFilePath(" + path + ")");
+    try {
+      MILLISECONDS.sleep(100);
+    } catch (InterruptedException intEx) {
+    }
+
+    log.log(Level.INFO, "CASFileCache::deleteFilePath(" + path + ")");
     // The name of a path has touchy semantics - prefix with _deleting
     Path temp =
         path.resolveSibling("_deleting." + path.getFileName() + "." + UUID.randomUUID().toString());
@@ -2807,6 +2812,13 @@ public abstract class CASFileCache implements ContentAddressableStorage {
     Files.delete(temp);
   }
 
+  private final void deleteFilePathBad(Path path) throws IOException {
+    try {
+      MILLISECONDS.sleep(100);
+    } catch (InterruptedException intEx) {
+    }
+    Files.delete(path);
+  }
   private final void createLink(Path a, Path b) throws IOException, FileAlreadyExistsException {
     synchronized (this) {
       Files.createLink(a, b);
@@ -2828,6 +2840,12 @@ public abstract class CASFileCache implements ContentAddressableStorage {
     if (publishTtlMetric) {
       createdTime = path.toFile().lastModified();
     }
+    /*
+    try {
+      MILLISECONDS.sleep(10);
+    } catch (InterruptedException intEx) {
+    }*/
+
 
     deleteFilePath(path);
 
@@ -3092,7 +3110,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
         Entry existingEntry = null;
         boolean inserted = false;
         try {
-          log.log(Level.FINEST, "comitting " + key + " from " + writePath);
+          log.log(Level.INFO, "comitting " + key + " from " + writePath);
           Path cachePath = CASFileCache.this.getPath(key);
           CASFileCache.this.renamePath(writePath, cachePath);
           existingEntry = storage.putIfAbsent(key, entry);

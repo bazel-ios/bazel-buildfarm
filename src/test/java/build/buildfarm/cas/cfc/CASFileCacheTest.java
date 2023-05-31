@@ -279,6 +279,11 @@ class CASFileCacheTest {
   @Test
   public void doesntExpireDuringExecution() throws IOException, InterruptedException {
     // Simulate an action with foo data and bar data
+    //
+    // Action 1 { foo, bar }
+    //
+    // Action 2 { foo, straw }
+    //
     byte[] fooData = new byte[500];
     ByteString fooBlob = ByteString.copyFrom(fooData);
     Digest fooDigest = DIGEST_UTIL.compute(fooBlob);
@@ -317,7 +322,8 @@ class CASFileCacheTest {
     AtomicBoolean started0 = new AtomicBoolean(false);
     AtomicBoolean started1 = new AtomicBoolean(false);
     AtomicBoolean started2 = new AtomicBoolean(false);
-
+/*
+    // We have a dependency on [foo, straw]
     ExecutorService service0 = newSingleThreadExecutor();
     Future<Void> barConsumerFuture1 =
         service0.submit(
@@ -325,6 +331,9 @@ class CASFileCacheTest {
               System.out.println("willPut0");
 	      try {
 		  fileCache.put(strawDigest, false);
+		  // Fetch [foo, straw] here?
+
+		  // Utilize [foo, straw]
               } catch (Exception e) {
 		  e.printStackTrace(System.out);
 		  System.out.println("Exception2" + e);
@@ -333,7 +342,7 @@ class CASFileCacheTest {
               System.out.println("didPut0");
               return null;
             });
-
+*/
 
     ExecutorService service1 = newSingleThreadExecutor();
     Future<Void> fetchFuture1 =
@@ -342,11 +351,14 @@ class CASFileCacheTest {
               System.out.println("willPut1");
 
 	      try {
+		  // Fetch [foo, bar] here?
+		  //
+		  // Utilize [foo, bar]
 
-		  // Note: jmarino this will not do much?
-		  Files.delete(barPath);
-
+		  System.out.println("XXX BAR" + barPath);
 		  decrementReference(barPath);
+		  //MICROSECONDS.sleep(1000);
+		  decrementReference(fooPath);
 		  //fileCache.put(strawDigest, false);
               } catch (Exception e) {
 		  e.printStackTrace(System.out);
@@ -369,11 +381,18 @@ class CASFileCacheTest {
 
 		  fileCache.findMissingBlobs(ImmutableList.of(strawDigest));
 		  fileCache.put(strawDigest, false);
+		  fileCache.put(fooDigest, false);
+
               } catch (Exception e) {
 		  e.printStackTrace(System.out);
 		  System.out.println("Exception2" + e);
 	      }
 
+
+	      if(!Files.exists(fooPath)) {
+		  System.out.println("XXX missing FooPath" + fooPath);
+		  return null;
+	      }
 	      //decrementReference(fooPath);
 	      //decrementReference(barPath);
               //fileCache.put(strawDigest, false);
@@ -384,11 +403,13 @@ class CASFileCacheTest {
     int  i = 0;
     while (!started0.get() || !started1.get() || !started2.get()) {
       //System.out.println("testWait");
-      MICROSECONDS.sleep(10000);
+      MICROSECONDS.sleep(1000);
       if ( i++ > 200) {
 	  break;
       }
     }
+    assertThat(started2.get()).isTrue();
+    assertThat(started1.get()).isTrue();
 
     assertThat(Files.exists(barPath)).isFalse();
     assertThat(storage.containsKey(barKey)).isFalse();
