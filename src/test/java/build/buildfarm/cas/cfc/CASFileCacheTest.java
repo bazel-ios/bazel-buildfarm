@@ -658,7 +658,7 @@ class CASFileCacheTest {
     when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(fooDigest), eq(0L)))
         .thenReturn(fooBlob.newInput());
 
-    byte[] barData = new byte[500];
+    byte[] barData = new byte[331];
     ByteString barBlob = ByteString.copyFrom(barData);
     Digest barDigest = DIGEST_UTIL.compute(barBlob);
     blobs.put(barDigest, barBlob);
@@ -668,7 +668,7 @@ class CASFileCacheTest {
     when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(barDigest), eq(0L)))
         .thenReturn(barBlob.newInput());
 
-    byte[] strawData = new byte[1]; // take us beyond our 1024 limit
+    byte[] strawData = new byte[333]; // take us beyond our 1024 limit
     ByteString strawBlob = ByteString.copyFrom(strawData);
     Digest strawDigest = DIGEST_UTIL.compute(strawBlob);
     blobs.put(strawDigest, strawBlob);
@@ -693,7 +693,7 @@ class CASFileCacheTest {
 
     // Thoretically we should spin several operations concurrnetly that fetch evicting actions
 
-    int producerTotal = 3;
+    int producerTotal = 1;
     for (int i = 0; i < producerTotal; i++) {
         ExecutorService service1 = newSingleThreadExecutor();
 	int producerId = i;
@@ -711,7 +711,29 @@ class CASFileCacheTest {
 		      Path strawDirPath = buildFetchableDir(strawDigest, "straw.ref", "straw.dir");
 		      decrementReference(strawDirPath);
 */
-		      Path fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
+
+		      Path fooDirPath;
+		      if (producerId % 2 == 0) {
+			  //fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
+		      } else {
+
+		//	  fooDirPath = buildFetchableDir(strawDigest, "straw.ref", "straw.dir");
+		      }
+
+
+		      byte[] fooData0 = new byte[499];
+		      fooData0[491] = (byte)producerId;
+		      ByteString file = ByteString.copyFrom(fooData0);
+
+		      //ByteString file = ByteString.copyFromUtf8("Wo" + producerId);
+		      Digest blobDigest = DIGEST_UTIL.compute(file);
+		      blobs.put(blobDigest, file);
+
+	              System.out.println("FooDigest" + blobDigest);
+		      fooDirPath = fileCache.put(blobDigest, false);
+	              System.out.println("FooDirPath" + fooDirPath);
+
+
 		      Path barDirPath = buildFetchableDir(barDigest, "bar.ref", "bar.dir");
 
 		      if (!Files.exists(barPath)) {

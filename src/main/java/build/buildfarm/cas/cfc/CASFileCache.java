@@ -2898,8 +2898,9 @@ public abstract class CASFileCache implements ContentAddressableStorage {
           existingEntry = storage.putIfAbsent(key, entry);
           inserted = existingEntry == null;
         } catch (FileAlreadyExistsException e) {
-          log.log(Level.FINE, "file already exists for " + key + ", nonexistent entry will fail");
+          log.log(Level.INFO, "file already exists for " + key + ", nonexistent entry will fail");
         } finally {
+          log.log(Level.INFO, "clean write path " + key + ":" + writePath);
           Files.delete(writePath);
           if (!inserted) {
             dischargeAndNotify(blobSizeInBytes);
