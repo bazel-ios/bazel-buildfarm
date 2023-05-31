@@ -320,17 +320,16 @@ class CASFileCacheTest {
   }
 
 
-  Path buildDir2(Digest fileDigest) throws IOException, InterruptedException {
-    //Digest fileDigest = DIGEST_UTIL.compute(file);
+  Path buildFetchableDir(Digest fileDigest, String fileName, String subdirName) throws IOException, InterruptedException {
+    // FIXME: assume they loaded this into the blogs
     //blobs.put(fileDigest, file);
-
     Directory subDirectory = Directory.getDefaultInstance();
     Digest subdirDigest = DIGEST_UTIL.compute(subDirectory);
     Directory directory =
         Directory.newBuilder()
-            .addFiles(FileNode.newBuilder().setName("file").setDigest(fileDigest).build())
+            .addFiles(FileNode.newBuilder().setName(fileName).setDigest(fileDigest).build())
             .addDirectories(
-                DirectoryNode.newBuilder().setName("subdir").setDigest(subdirDigest).build())
+                DirectoryNode.newBuilder().setName(subdirName).setDigest(subdirDigest).build())
             .build();
 
     Digest dirDigest = DIGEST_UTIL.compute(directory);
@@ -339,13 +338,14 @@ class CASFileCacheTest {
             dirDigest, directory,
             subdirDigest, subDirectory);
 
+    ExecutorService putService = newSingleThreadExecutor();
     Path dirPath =
         getInterruptiblyOrIOException(
             fileCache.putDirectory(dirDigest, directoriesIndex, putService));
     return dirPath;
   }
 
-  // jmarino - this is a basic test of of the method buildDir2
+  // jmarino - this is a basic test of of the method buildFetchableDir
   @Test
   public void dirBuilderBasic() throws IOException, InterruptedException {
 
@@ -357,7 +357,7 @@ class CASFileCacheTest {
     when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(strawDigest), eq(0L)))
         .thenReturn(strawBlob.newInput());
 
-    Path dirPath = buildDir2(strawDigest);
+    Path dirPath = buildFetchableDir(strawDigest, "file", "subdir");
     assertThat(Files.isDirectory(dirPath)).isTrue();
     assertThat(Files.exists(dirPath.resolve("file"))).isTrue();
     assertThat(Files.isDirectory(dirPath.resolve("subdir"))).isTrue();
@@ -399,8 +399,8 @@ class CASFileCacheTest {
     blobs.put(strawDigest, strawBlob);
     String strawKey = fileCache.getKey(strawDigest, false);
     Path strawPath = fileCache.getPath(strawKey);
-    when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(strawDigest), eq(0L)))
-        .thenReturn(strawBlob.newInput());
+    //when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(strawDigest), eq(0L)))
+    //    .thenReturn(strawBlob.newInput());
 
     ImmutableList.Builder<String> keysBuilder = new ImmutableList.Builder<>();
     //keysBuilder.add(barKey);
@@ -463,7 +463,6 @@ class CASFileCacheTest {
               return null;
             });
 
-    decrementReference(barPath);
     ExecutorService service2 = newSingleThreadExecutor();
     Future<Void> consumerFuture1 =
         service2.submit(
@@ -490,9 +489,10 @@ class CASFileCacheTest {
 
 
 */
+	      String fileName = "strawRef";
 	      Path dirPath = null;
 		try {
-		   dirPath = buildDir(ImmutableList.of(strawDigest));
+		    dirPath = buildFetchableDir(strawDigest, fileName, "straw.dir");
 		    System.out.println("BUILT DIR" + strawDigest);
 		} catch (Exception e) {
 		    System.out.println("DIR BURNED");
@@ -505,7 +505,7 @@ class CASFileCacheTest {
 
 	      }
 
-	      Path resolvedPath = dirPath.resolve("file");
+	      Path resolvedPath = dirPath.resolve(fileName);
 	      if(!Files.exists(resolvedPath)) {
 		  System.out.println("XXX missing resolvedPath" + resolvedPath + "digest:" + strawDigest);
 		  return null;
