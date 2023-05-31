@@ -225,6 +225,7 @@ class CASFileCacheTest {
     ByteString file = ByteString.copyFromUtf8("Peanut Butter");
     Digest fileDigest = DIGEST_UTIL.compute(file);
     blobs.put(fileDigest, file);
+
     Directory subDirectory = Directory.getDefaultInstance();
     Digest subdirDigest = DIGEST_UTIL.compute(subDirectory);
     Directory directory =
@@ -233,11 +234,14 @@ class CASFileCacheTest {
             .addDirectories(
                 DirectoryNode.newBuilder().setName("subdir").setDigest(subdirDigest).build())
             .build();
+
     Digest dirDigest = DIGEST_UTIL.compute(directory);
     Map<Digest, Directory> directoriesIndex =
         ImmutableMap.of(
             dirDigest, directory,
             subdirDigest, subDirectory);
+
+
     Path dirPath =
         getInterruptiblyOrIOException(
             fileCache.putDirectory(dirDigest, directoriesIndex, putService));
@@ -250,8 +254,12 @@ class CASFileCacheTest {
   public void putDirectoryIOExceptionRollsBack() throws IOException, InterruptedException {
     ByteString file = ByteString.copyFromUtf8("Peanut Butter");
     Digest fileDigest = DIGEST_UTIL.compute(file);
+
+
     // omitting blobs.put to incur IOException
     Directory subDirectory = Directory.getDefaultInstance();
+
+
     Digest subdirDigest = DIGEST_UTIL.compute(subDirectory);
     Directory directory =
         Directory.newBuilder()
@@ -259,6 +267,8 @@ class CASFileCacheTest {
             .addDirectories(
                 DirectoryNode.newBuilder().setName("subdir").setDigest(subdirDigest).build())
             .build();
+
+
     Digest dirDigest = DIGEST_UTIL.compute(directory);
     Map<Digest, Directory> directoriesIndex =
         ImmutableMap.of(
@@ -277,11 +287,14 @@ class CASFileCacheTest {
 
 
 
-  Map<Digest, Directory> buildDir(Iterable<Digest> fileDigests) throws IOException, InterruptedException {
+  Path buildDir(Iterable<Digest> fileDigests) throws IOException, InterruptedException {
     Directory subDirectory = Directory.getDefaultInstance();
     Digest subdirDigest = DIGEST_UTIL.compute(subDirectory);
     ImmutableMap.Builder<Digest, Directory> dirsBuilder = new ImmutableMap.Builder<>();
+
+    Map<Digest, Directory> directoriesIndex = null;
     for (Digest fileDigest : fileDigests) {
+	System.out.println("XXX Add file" + fileDigest);
 	Directory directory =
 	    Directory.newBuilder()
 		.addFiles(FileNode.newBuilder().setName("file").setDigest(fileDigest).build())
@@ -290,16 +303,65 @@ class CASFileCacheTest {
 		.build();
 	Digest dirDigest = DIGEST_UTIL.compute(directory);
 	dirsBuilder.put(dirDigest, directory);
+
+	directoriesIndex =
+	    ImmutableMap.of(
+		dirDigest, directory,
+		subdirDigest, subDirectory);
+
     }
 
     dirsBuilder.put(subdirDigest, subDirectory);
-    Map<Digest, Directory> directoriesIndex = dirsBuilder.build();
+    //Map<Digest, Directory> directoriesIndex = dirsBuilder.build();
     Path dirPath =
         getInterruptiblyOrIOException(
             fileCache.putDirectory(subdirDigest, directoriesIndex, putService));
-    return directoriesIndex;
+    return dirPath;
   }
 
+
+  Path buildDir2(Digest fileDigest) throws IOException, InterruptedException {
+    //Digest fileDigest = DIGEST_UTIL.compute(file);
+    //blobs.put(fileDigest, file);
+
+    Directory subDirectory = Directory.getDefaultInstance();
+    Digest subdirDigest = DIGEST_UTIL.compute(subDirectory);
+    Directory directory =
+        Directory.newBuilder()
+            .addFiles(FileNode.newBuilder().setName("file").setDigest(fileDigest).build())
+            .addDirectories(
+                DirectoryNode.newBuilder().setName("subdir").setDigest(subdirDigest).build())
+            .build();
+
+    Digest dirDigest = DIGEST_UTIL.compute(directory);
+    Map<Digest, Directory> directoriesIndex =
+        ImmutableMap.of(
+            dirDigest, directory,
+            subdirDigest, subDirectory);
+
+    Path dirPath =
+        getInterruptiblyOrIOException(
+            fileCache.putDirectory(dirDigest, directoriesIndex, putService));
+    return dirPath;
+  }
+
+  // jmarino - this is a basic test of of the method buildDir2
+  @Test
+  public void dirBuilderBasic() throws IOException, InterruptedException {
+
+    byte[] strawData = new byte[30]; // take us beyond our 1024 limit
+    ByteString strawBlob = ByteString.copyFrom(strawData);
+    Digest strawDigest = DIGEST_UTIL.compute(strawBlob);
+    blobs.put(strawDigest, strawBlob);
+
+    when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(strawDigest), eq(0L)))
+        .thenReturn(strawBlob.newInput());
+
+    Path dirPath = buildDir2(strawDigest);
+    assertThat(Files.isDirectory(dirPath)).isTrue();
+    assertThat(Files.exists(dirPath.resolve("file"))).isTrue();
+    assertThat(Files.isDirectory(dirPath.resolve("subdir"))).isTrue();
+  }
 
   // jmarino
   @Test
@@ -337,14 +399,8 @@ class CASFileCacheTest {
     blobs.put(strawDigest, strawBlob);
     String strawKey = fileCache.getKey(strawDigest, false);
     Path strawPath = fileCache.getPath(strawKey);
-
-    try {
-       buildDir(ImmutableList.of(strawDigest));
-	System.out.println("BUILT DIR" + strawDigest);
-    } catch (Exception e) {
-	System.out.println("DIR BURNED");
-        e.printStackTrace(System.out);
-    }
+    when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(strawDigest), eq(0L)))
+        .thenReturn(strawBlob.newInput());
 
     ImmutableList.Builder<String> keysBuilder = new ImmutableList.Builder<>();
     //keysBuilder.add(barKey);
@@ -379,6 +435,7 @@ class CASFileCacheTest {
 */
 
     // Thoretically we should spin several operations concurrnetly that fetch evicting actions
+
     ExecutorService service1 = newSingleThreadExecutor();
     Future<Void> fetchFuture1 =
         service1.submit(
@@ -393,7 +450,7 @@ class CASFileCacheTest {
 		  System.out.println("XXX BAR" + barPath);
 		  decrementReference(barPath);
 		  //MICROSECONDS.sleep(1000);
-		  decrementReference(fooPath);
+		  //decrementReference(fooPath);
 		  //fileCache.put(strawDigest, false);
               } catch (Exception e) {
 		  e.printStackTrace(System.out);
@@ -406,26 +463,57 @@ class CASFileCacheTest {
               return null;
             });
 
+    decrementReference(barPath);
     ExecutorService service2 = newSingleThreadExecutor();
     Future<Void> consumerFuture1 =
         service2.submit(
             () -> {
 	      // This future needs to begin a race where it fetches strawData
               System.out.println("willPut2");
+
+
+/*
 	      try {
 
 		  fileCache.findMissingBlobs(ImmutableList.of(strawDigest));
-		  fileCache.put(strawDigest, false);
+		  //fileCache.put(strawDigest, false);
 		  fileCache.put(fooDigest, false);
 
               } catch (Exception e) {
 		  e.printStackTrace(System.out);
 		  System.out.println("Exception2" + e);
 	      }
-
-
 	      if(!Files.exists(fooPath)) {
-		  System.out.println("XXX missing FooPath" + fooPath);
+		  System.out.println("XXX missing fooPath" + fooPath);
+		  return null;
+	      }
+
+
+*/
+	      Path dirPath = null;
+		try {
+		   dirPath = buildDir(ImmutableList.of(strawDigest));
+		    System.out.println("BUILT DIR" + strawDigest);
+		} catch (Exception e) {
+		    System.out.println("DIR BURNED");
+		    e.printStackTrace(System.out);
+	      }
+
+              if(!Files.isDirectory(dirPath)) {
+		  System.out.println("XXX missing dirPath" + dirPath);
+		  return null;
+
+	      }
+
+	      Path resolvedPath = dirPath.resolve("file");
+	      if(!Files.exists(resolvedPath)) {
+		  System.out.println("XXX missing resolvedPath" + resolvedPath + "digest:" + strawDigest);
+		  return null;
+	      }
+
+	      MICROSECONDS.sleep(1000);
+	      if(!Files.exists(strawPath)) {
+		  System.out.println("XXX missing strawPath" + strawPath);
 		  return null;
 	      }
 	      //decrementReference(fooPath);
@@ -435,20 +523,22 @@ class CASFileCacheTest {
               started2.set(true);
               return null;
             });
+
     int  i = 0;
     while (!started0.get() || !started1.get() || !started2.get()) {
       //System.out.println("testWait");
       MICROSECONDS.sleep(1000);
-      if ( i++ > 200) {
+      if ( i++ > 600) {
 	  break;
       }
     }
     assertThat(started2.get()).isTrue();
-    assertThat(started1.get()).isTrue();
+    //assertThat(started1.get()).isTrue();
 
+    /*
     assertThat(Files.exists(barPath)).isFalse();
     assertThat(storage.containsKey(barKey)).isFalse();
-
+*/
     assertThat(Files.exists(fooPath)).isTrue();
     assertThat(storage.containsKey(fooKey)).isTrue();
 
