@@ -442,39 +442,42 @@ class CASFileCacheTest {
 
     // Thoretically we should spin several operations concurrnetly that fetch evicting actions
 
-    ExecutorService service1 = newSingleThreadExecutor();
-    Future<Void> fetchFuture1 =
-        service1.submit(
-            () -> {
-              System.out.println("willPut1");
+    int producerTotal = 5;
+    for (int i = 0; i < producerTotal; i++) {
+	ExecutorService service1 = newSingleThreadExecutor();
+	int producerId = i;
+	Future<Void> fetchFuture1 =
+	    service1.submit(
+		() -> {
+		  System.out.println("willPut.producer" + producerId);
 
-	      try {
-		  // Fetch [foo, bar] here?
-		  //
-		  // Utilize [foo, bar]
+		  try {
+		      // Fetch [foo, bar] here?
+		      //
+		      // Utilize [foo, bar]
 
-		  Path fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
+		      Path fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
 
-		  System.out.println("XXX BAR" + barPath);
-		  decrementReference(fooPath);
-		  decrementReference(fooDirPath);
-		  decrementReference(barPath);
-		  //MICROSECONDS.sleep(1000);
-		  //decrementReference(fooPath);
+		      System.out.println("XXX BAR" + barPath);
+		      decrementReference(fooPath);
+		      decrementReference(fooDirPath);
+		      decrementReference(barPath);
+		      //MICROSECONDS.sleep(1000);
+		      //decrementReference(fooPath);
+		      //fileCache.put(strawDigest, false);
+		  } catch (Exception e) {
+		      e.printStackTrace(System.out);
+		      System.out.println("Exception1" + e);
+
+		  }
+
+		  producerCt.getAndIncrement();
 		  //fileCache.put(strawDigest, false);
-              } catch (Exception e) {
-		  e.printStackTrace(System.out);
-		  System.out.println("Exception1" + e);
-
-	      }
-
-	      producerCt.getAndIncrement();
-
-              //fileCache.put(strawDigest, false);
-              System.out.println("didPut1");
-              started1.set(true);
-              return null;
-            });
+		  System.out.println("didPut.producer" + producerId);
+		  started1.set(true);
+		  return null;
+		});
+    }
 
     ExecutorService service2 = newSingleThreadExecutor();
     Future<Void> consumerFuture1 =
@@ -533,7 +536,7 @@ class CASFileCacheTest {
             });
 
     int  i = 0;
-    while (!started0.get() || producerCt.get() != 1 || !started2.get()) {
+    while (!started0.get() || producerCt.get() < producerTotal || !started2.get()) {
       //System.out.println("testWait");
       MICROSECONDS.sleep(1000);
       if ( i++ > 600) {
@@ -541,7 +544,7 @@ class CASFileCacheTest {
       }
     }
     assertThat(started2.get()).isTrue();
-    assertThat(producerCt.get() == 1).isTrue();
+    assertThat(producerCt.get() == producerTotal).isTrue();
 
     /*
     assertThat(Files.exists(barPath)).isFalse();
