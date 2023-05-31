@@ -275,6 +275,32 @@ class CASFileCacheTest {
     assertThat(Files.exists(fileCache.getDirectoryPath(dirDigest))).isFalse();
   }
 
+
+
+  Map<Digest, Directory> buildDir(Iterable<Digest> fileDigests) throws IOException, InterruptedException {
+    Directory subDirectory = Directory.getDefaultInstance();
+    Digest subdirDigest = DIGEST_UTIL.compute(subDirectory);
+    ImmutableMap.Builder<Digest, Directory> dirsBuilder = new ImmutableMap.Builder<>();
+    for (Digest fileDigest : fileDigests) {
+	Directory directory =
+	    Directory.newBuilder()
+		.addFiles(FileNode.newBuilder().setName("file").setDigest(fileDigest).build())
+		.addDirectories(
+		    DirectoryNode.newBuilder().setName("subdir").setDigest(subdirDigest).build())
+		.build();
+	Digest dirDigest = DIGEST_UTIL.compute(directory);
+	dirsBuilder.put(dirDigest, directory);
+    }
+
+    dirsBuilder.put(subdirDigest, subDirectory);
+    Map<Digest, Directory> directoriesIndex = dirsBuilder.build();
+    Path dirPath =
+        getInterruptiblyOrIOException(
+            fileCache.putDirectory(subdirDigest, directoriesIndex, putService));
+    return directoriesIndex;
+  }
+
+
   // jmarino
   @Test
   public void doesntExpireDuringExecution() throws IOException, InterruptedException {
@@ -312,6 +338,14 @@ class CASFileCacheTest {
     String strawKey = fileCache.getKey(strawDigest, false);
     Path strawPath = fileCache.getPath(strawKey);
 
+    try {
+       buildDir(ImmutableList.of(strawDigest));
+	System.out.println("BUILT DIR" + strawDigest);
+    } catch (Exception e) {
+	System.out.println("DIR BURNED");
+        e.printStackTrace(System.out);
+    }
+
     ImmutableList.Builder<String> keysBuilder = new ImmutableList.Builder<>();
     //keysBuilder.add(barKey);
     //keysBuilder.add(fooKey);
@@ -344,6 +378,7 @@ class CASFileCacheTest {
             });
 */
 
+    // Thoretically we should spin several operations concurrnetly that fetch evicting actions
     ExecutorService service1 = newSingleThreadExecutor();
     Future<Void> fetchFuture1 =
         service1.submit(
