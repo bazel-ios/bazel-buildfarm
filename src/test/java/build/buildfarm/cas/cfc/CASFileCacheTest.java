@@ -275,24 +275,68 @@ class CASFileCacheTest {
     assertThat(Files.exists(fileCache.getDirectoryPath(dirDigest))).isFalse();
   }
 
+  // jmarino
   @Test
   public void expireUnreferencedEntryRemovesBlobFile() throws IOException, InterruptedException {
     byte[] bigData = new byte[1000];
     ByteString bigBlob = ByteString.copyFrom(bigData);
     Digest bigDigest = DIGEST_UTIL.compute(bigBlob);
     blobs.put(bigDigest, bigBlob);
+
+
+    String expiringKey = fileCache.getKey(bigDigest, /* isExecutable=*/ false);
+    ImmutableList.Builder<String> keysBuilder = new ImmutableList.Builder<>();
+    keysBuilder.add(expiringKey);
+    //fileCache.incrementKeys(keysBuilder.build());
     Path bigPath = fileCache.put(bigDigest, false);
 
-    decrementReference(bigPath);
 
     byte[] strawData = new byte[30]; // take us beyond our 1024 limit
     ByteString strawBlob = ByteString.copyFrom(strawData);
     Digest strawDigest = DIGEST_UTIL.compute(strawBlob);
     blobs.put(strawDigest, strawBlob);
-    Path strawPath = fileCache.put(strawDigest, false);
 
-    assertThat(Files.exists(bigPath)).isFalse();
-    assertThat(Files.exists(strawPath)).isTrue();
+    AtomicBoolean started1 = new AtomicBoolean(false);
+
+    Future<Void> putFuture1 =
+        newSingleThreadExecutor().submit(
+            () -> {
+              started1.set(true);
+              System.out.println("willPut1");
+              fileCache.put(strawDigest, false);
+              System.out.println("didPut1");
+              return null;
+            });
+    while (!started1.get()) {
+      System.out.println("testWait");
+      MICROSECONDS.sleep(10);
+    }
+
+    // minimal test to ensure that we're blocked
+    assertThat(putFuture1.isDone()).isFalse();
+    decrementReference(bigPath);
+
+    AtomicBoolean started2 = new AtomicBoolean(false);
+    Future<Void> putFuture2 =
+        newSingleThreadExecutor().submit(
+            () -> {
+              started2.set(true);
+              System.out.println("willPut1");
+              fileCache.put(strawDigest, false);
+              System.out.println("didPut1");
+              return null;
+            });
+    while (!started2.get()) {
+      System.out.println("testWait");
+      MICROSECONDS.sleep(10);
+    }
+
+
+    String strawKey = fileCache.getKey(strawDigest, false);
+    Path strawPath = fileCache.getPath(strawKey);
+
+    assertThat(Files.exists(bigPath)).isTrue();
+    assertThat(Files.exists(strawPath)).isFalse();
   }
 
   @Test
@@ -886,6 +930,8 @@ class CASFileCacheTest {
     assertThat(storage.containsKey(expiringKey)).isFalse();
     assertThat(Files.exists(fileCache.getPath(expiringKey))).isFalse();
   }
+
+
 
   @SuppressWarnings("unchecked")
   @Test
