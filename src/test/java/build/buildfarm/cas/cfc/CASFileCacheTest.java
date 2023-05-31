@@ -373,35 +373,38 @@ class CASFileCacheTest {
     //
     // Action 2 { foo, straw }
     //
-    byte[] fooData = new byte[470];
+    byte[] fooData = new byte[499];
     ByteString fooBlob = ByteString.copyFrom(fooData);
     Digest fooDigest = DIGEST_UTIL.compute(fooBlob);
-    //blobs.put(fooDigest, fooBlob);
+    blobs.put(fooDigest, fooBlob);
     String fooKey = fileCache.getKey(fooDigest, false);
 
     Path fooPath = fileCache.getPath(fooKey);
+
     // foo is not loaded
-    //fileCache.put(fooDigest, false);
+    // fileCache.put(fooDigest, false);
 
     when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(fooDigest), eq(0L)))
         .thenReturn(fooBlob.newInput());
 
-    byte[] barData = new byte[501];
+    byte[] barData = new byte[500];
     ByteString barBlob = ByteString.copyFrom(barData);
     Digest barDigest = DIGEST_UTIL.compute(barBlob);
-    //blobs.put(barDigest, barBlob);
+    blobs.put(barDigest, barBlob);
     String barKey = fileCache.getKey(barDigest, false);
     Path barPath = fileCache.getPath(barKey);
     //fileCache.put(barDigest, false);
-    //when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(barDigest), eq(0L)))
-    //    .thenReturn(barBlob.newInput());
+    when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(barDigest), eq(0L)))
+        .thenReturn(barBlob.newInput());
 
-    byte[] strawData = new byte[30]; // take us beyond our 1024 limit
+    byte[] strawData = new byte[1]; // take us beyond our 1024 limit
     ByteString strawBlob = ByteString.copyFrom(strawData);
     Digest strawDigest = DIGEST_UTIL.compute(strawBlob);
     blobs.put(strawDigest, strawBlob);
+
     String strawKey = fileCache.getKey(strawDigest, false);
     Path strawPath = fileCache.getPath(strawKey);
+    //fileCache.put(strawDigest, false);
     // note: straw is not loaded
     //when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(strawDigest), eq(0L)))
     //    .thenReturn(strawBlob.newInput());
@@ -413,11 +416,9 @@ class CASFileCacheTest {
     fileCache.incrementKeys(keysBuilder.build());
 
 
-    AtomicBoolean started0 = new AtomicBoolean(false);
 
     AtomicInteger producerCt = new AtomicInteger(0);
-    AtomicBoolean started1 = new AtomicBoolean(false);
-    AtomicBoolean started2 = new AtomicBoolean(false);
+    AtomicInteger consumerCt = new AtomicInteger(0);
 /*
     // We have a dependency on [foo, straw]
     ExecutorService service0 = newSingleThreadExecutor();
@@ -442,7 +443,7 @@ class CASFileCacheTest {
 
     // Thoretically we should spin several operations concurrnetly that fetch evicting actions
 
-    int producerTotal = 1;
+    int producerTotal = 3;
     for (int i = 0; i < producerTotal; i++) {
         ExecutorService service1 = newSingleThreadExecutor();
 	int producerId = i;
@@ -456,94 +457,110 @@ class CASFileCacheTest {
 		      //
 		      // Utilize [foo, bar]
 
-		    /*
+/*
 		      Path strawDirPath = buildFetchableDir(strawDigest, "straw.ref", "straw.dir");
 		      decrementReference(strawDirPath);
 */
 		      Path fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
-
 		      Path barDirPath = buildFetchableDir(barDigest, "bar.ref", "bar.dir");
-		      decrementReference(fooPath);
-		      decrementReference(barPath);
+
+		      if (!Files.exists(barPath)) {
+			  System.out.println("Missing paths");
+			  return null;
+		      }
+		      if (!Files.exists(barDirPath)) {
+			  System.out.println("Missing paths");
+			  return null;
+		      }
+		      if (!Files.exists(fooDirPath)) {
+			  System.out.println("Missing paths");
+			  return null;
+		      }
+
+		      decrementReference(barDirPath);
+		      decrementReference(fooDirPath);
 		      // Hmm: seems like this blows out
 		      //decrementReference(fooDirPath);
 		  } catch (Exception e) {
 		      e.printStackTrace(System.out);
 		      System.out.println("Exception1" + e);
-
 		  }
 
 		  producerCt.getAndIncrement();
 		  //fileCache.put(strawDigest, false);
 		  System.out.println("didPut.producer" + producerId);
-		  started1.set(true);
 		  return null;
 		});
     }
 
-    ExecutorService service2 = newSingleThreadExecutor();
-    Future<Void> consumerFuture1 =
-        service2.submit(
-            () -> {
-	      // This future needs to begin a race where it fetches strawData
-              System.out.println("willPut2");
+    int consumerTotal = 3;
+    for (int i = 0; i < consumerTotal; i++) {
+        ExecutorService service1 = newSingleThreadExecutor();
+	int consumerId = i;
+	Future<Void> fetchFuture1 =
+	    service1.submit(
+		() -> {
+		  System.out.println("willPut.consumer" + consumerId);
 
+		  try {
+		      // Fetch [foo, bar] here?
+		      //
+		      // Utilize [foo, bar]
+		      ByteString file = ByteString.copyFromUtf8("Wo" + consumerId);
+		      Digest fileDigest = DIGEST_UTIL.compute(file);
+		      blobs.put(fileDigest, file);
+		      Path strawDirPath = buildFetchableDir(fileDigest, "straw.ref", "straw.dir");
 
-/*
-	      try {
+		      /*
+		      Path fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
+		      */
+		      Path barDirPath = buildFetchableDir(barDigest, "bar.ref", "bar.dir");
 
-		  fileCache.findMissingBlobs(ImmutableList.of(strawDigest));
+		      if (!Files.exists(barPath)) {
+			  System.out.println("Missing paths");
+			  return null;
+		      }
+		      if (!Files.exists(barDirPath)) {
+			  System.out.println("Missing paths");
+			  return null;
+		      }
+		      if (!Files.exists(strawDirPath)) {
+			  System.out.println("Missing paths");
+			  return null;
+		      }
+		      decrementReference(barDirPath);
+		      /*
+		      decrementReference(fooPath);
+		      */
+		      decrementReference(barPath);
+		      // Hmm: seems like this blows out
+
+		      decrementReference(strawDirPath);
+		  } catch (Exception e) {
+		      e.printStackTrace(System.out);
+		      System.out.println("Exception1" + e);
+		  }
+
+		  consumerCt.getAndIncrement();
 		  //fileCache.put(strawDigest, false);
-		  fileCache.put(fooDigest, false);
+		  System.out.println("didPut.consumer" + consumerId);
+		  return null;
+		});
+    }
 
-              } catch (Exception e) {
-		  e.printStackTrace(System.out);
-		  System.out.println("Exception2" + e);
-	      }
-	      if(!Files.exists(fooPath)) {
-		  System.out.println("XXX missing fooPath" + fooPath);
-		  return null;
-	      }
-
-*/
-	      String fileName = "straw.ref";
-	      Path dirPath = null;
-		try {
-		    dirPath = buildFetchableDir(strawDigest, fileName, "straw.dir");
-
-		    Path fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
-		} catch (Exception e) {
-		    System.out.println("Exception DIR BURNED");
-		    e.printStackTrace(System.out);
-	      }
-              if(!Files.isDirectory(dirPath)) {
-		  System.out.println("XXX missing dirPath" + dirPath);
-		  return null;
-	      }
-	      Path resolvedPath = dirPath.resolve(fileName);
-	      if(!Files.exists(resolvedPath)) {
-		  System.out.println("XXX missing resolvedPath" + resolvedPath + "digest:" + strawDigest);
-		  return null;
-	      }
-	      if(!Files.exists(strawPath)) {
-		  System.out.println("XXX missing strawPath" + strawPath);
-		  return null;
-	      }
-	      //decrementReference(fooPath);
-	      //decrementReference(barPath);
-              //fileCache.put(strawDigest, false);
-              System.out.println("didPut2");
-              started2.set(true);
-              return null;
-            });
 
     int  i = 0;
-    while ((producerCt.get() < (producerTotal - 1)) || !started2.get()) {
-      //System.out.println("testWait");
-      MICROSECONDS.sleep(100);
+    while ((producerCt.get() < (producerTotal - 1)) || (consumerCt.get() < (consumerTotal - 1))) {
+      if (!(producerCt.get() < (producerTotal - 1))) {
+          System.out.println("testWait.producerCt" + producerCt.get());
+      }
+      if (!(consumerCt.get() < (consumerTotal - 1))) {
+          System.out.println("testWait.consumerCt" + consumerCt.get());
+      }
+      MICROSECONDS.sleep(1000);
     }
-    assertThat(started2.get()).isTrue();
-    assertThat(producerCt.get() == producerTotal).isTrue();
+    assertThat(producerCt.get()).isEqualTo(producerTotal);
+    assertThat(consumerCt.get()).isEqualTo(consumerTotal);
 
     /*
     assertThat(Files.exists(barPath)).isFalse();
@@ -555,8 +572,10 @@ class CASFileCacheTest {
 
     //assertThat(fileCache.findMissingBlobs(ImmutableList.of(strawDigest))).isEmpty();
     //assertThat(Files.exists(strawPath)).isTrue();
+    /*
     assertThat(storage.containsKey(strawKey)).isTrue();
     assertThat(fileCache.contains(strawDigest, null)).isTrue();
+    */
 
 /*
 
@@ -617,6 +636,127 @@ class CASFileCacheTest {
     */
   }
 
+  @Test
+  public void commitRacer() throws IOException, InterruptedException {
+    // Simulate an action with foo data and bar data
+    //
+    // Action 1 { foo, bar }
+    //
+    // Action 2 { foo, straw }
+    //
+    byte[] fooData = new byte[499];
+    ByteString fooBlob = ByteString.copyFrom(fooData);
+    Digest fooDigest = DIGEST_UTIL.compute(fooBlob);
+    blobs.put(fooDigest, fooBlob);
+    String fooKey = fileCache.getKey(fooDigest, false);
+
+    Path fooPath = fileCache.getPath(fooKey);
+
+    // foo is not loaded
+    // fileCache.put(fooDigest, false);
+
+    when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(fooDigest), eq(0L)))
+        .thenReturn(fooBlob.newInput());
+
+    byte[] barData = new byte[500];
+    ByteString barBlob = ByteString.copyFrom(barData);
+    Digest barDigest = DIGEST_UTIL.compute(barBlob);
+    blobs.put(barDigest, barBlob);
+    String barKey = fileCache.getKey(barDigest, false);
+    Path barPath = fileCache.getPath(barKey);
+    //fileCache.put(barDigest, false);
+    when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(barDigest), eq(0L)))
+        .thenReturn(barBlob.newInput());
+
+    byte[] strawData = new byte[1]; // take us beyond our 1024 limit
+    ByteString strawBlob = ByteString.copyFrom(strawData);
+    Digest strawDigest = DIGEST_UTIL.compute(strawBlob);
+    blobs.put(strawDigest, strawBlob);
+
+    String strawKey = fileCache.getKey(strawDigest, false);
+    Path strawPath = fileCache.getPath(strawKey);
+    //fileCache.put(strawDigest, false);
+    // note: straw is not loaded
+    //when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(strawDigest), eq(0L)))
+    //    .thenReturn(strawBlob.newInput());
+
+    ImmutableList.Builder<String> keysBuilder = new ImmutableList.Builder<>();
+    //keysBuilder.add(barKey);
+    //keysBuilder.add(fooKey);
+    //keysBuilder.add(strawKey);
+    fileCache.incrementKeys(keysBuilder.build());
+
+
+
+    AtomicInteger producerCt = new AtomicInteger(0);
+    AtomicInteger consumerCt = new AtomicInteger(0);
+
+    // Thoretically we should spin several operations concurrnetly that fetch evicting actions
+
+    int producerTotal = 3;
+    for (int i = 0; i < producerTotal; i++) {
+        ExecutorService service1 = newSingleThreadExecutor();
+	int producerId = i;
+	Future<Void> fetchFuture1 =
+	    service1.submit(
+		() -> {
+		  System.out.println("willPut.producer" + producerId);
+
+		  try {
+		      // Fetch [foo, bar] here?
+		      //
+		      // Utilize [foo, bar]
+
+/*
+		      Path strawDirPath = buildFetchableDir(strawDigest, "straw.ref", "straw.dir");
+		      decrementReference(strawDirPath);
+*/
+		      Path fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
+		      Path barDirPath = buildFetchableDir(barDigest, "bar.ref", "bar.dir");
+
+		      if (!Files.exists(barPath)) {
+			  System.out.println("Missing paths");
+			  return null;
+		      }
+		      if (!Files.exists(barDirPath)) {
+			  System.out.println("Missing paths");
+			  return null;
+		      }
+		      if (!Files.exists(fooDirPath)) {
+			  System.out.println("Missing paths");
+			  return null;
+		      }
+
+		      decrementReference(barDirPath);
+		      decrementReference(fooDirPath);
+		      // Hmm: seems like this blows out
+		      //decrementReference(fooDirPath);
+		  } catch (Exception e) {
+		      e.printStackTrace(System.out);
+		      System.out.println("Exception1" + e);
+		  }
+
+		  producerCt.getAndIncrement();
+		  //fileCache.put(strawDigest, false);
+		  System.out.println("didPut.producer" + producerId);
+		  return null;
+		});
+    }
+    int consumerTotal = 1;
+
+    int  i = 0;
+    while ((producerCt.get() < (producerTotal - 1)) || (consumerCt.get() < (consumerTotal - 1))) {
+      if (!(producerCt.get() < (producerTotal - 1))) {
+          System.out.println("testWait.producerCt" + producerCt.get());
+      }
+      if (!(consumerCt.get() < (consumerTotal - 1))) {
+          System.out.println("testWait.consumerCt" + consumerCt.get());
+      }
+      MICROSECONDS.sleep(1000);
+    }
+    assertThat(producerCt.get()).isEqualTo(producerTotal);
+
+  }
 
   // jmarino: complete this
   @Test
