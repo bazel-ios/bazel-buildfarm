@@ -1903,7 +1903,6 @@ public abstract class CASFileCache implements ContentAddressableStorage {
         // When the Entry is in an unreferenced sate state ( refCt == -1 ) -
         // we don't want to subtract from this value
 	int ret = Math.min(Math.max(keyCt, refCt), 1);
-        log.log(Level.SEVERE, String.format("NULLx KEY %s %d ret ", e.key, ret));
 	return ret;
       }
     }

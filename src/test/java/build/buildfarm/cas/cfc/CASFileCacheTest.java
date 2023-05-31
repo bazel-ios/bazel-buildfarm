@@ -308,15 +308,31 @@ class CASFileCacheTest {
     Path strawPath = fileCache.getPath(strawKey);
 
     ImmutableList.Builder<String> keysBuilder = new ImmutableList.Builder<>();
-/*    keysBuilder.add(barKey);
-    keysBuilder.add(fooKey);
-    keysBuilder.add(strawKey);*/
+    //keysBuilder.add(barKey);
+    //keysBuilder.add(fooKey);
+    //keysBuilder.add(strawKey);
     fileCache.incrementKeys(keysBuilder.build());
 
 
     AtomicBoolean started0 = new AtomicBoolean(false);
     AtomicBoolean started1 = new AtomicBoolean(false);
     AtomicBoolean started2 = new AtomicBoolean(false);
+
+    ExecutorService service0 = newSingleThreadExecutor();
+    Future<Void> barConsumerFuture1 =
+        service0.submit(
+            () -> {
+              System.out.println("willPut0");
+	      try {
+		  fileCache.put(strawDigest, false);
+              } catch (Exception e) {
+		  e.printStackTrace(System.out);
+		  System.out.println("Exception2" + e);
+	      }
+              started0.set(true);
+              System.out.println("didPut0");
+              return null;
+            });
 
 
     ExecutorService service1 = newSingleThreadExecutor();
@@ -326,7 +342,10 @@ class CASFileCacheTest {
               System.out.println("willPut1");
 
 	      try {
+
+		  // Note: jmarino this will not do much?
 		  Files.delete(barPath);
+
 		  decrementReference(barPath);
 		  //fileCache.put(strawDigest, false);
               } catch (Exception e) {
@@ -362,23 +381,6 @@ class CASFileCacheTest {
               started2.set(true);
               return null;
             });
-    ExecutorService service0 = newSingleThreadExecutor();
-    Future<Void> barConsumerFuture1 =
-        service0.submit(
-            () -> {
-              System.out.println("willPut0");
-	      try {
-		  fileCache.put(strawDigest, false);
-              } catch (Exception e) {
-		  e.printStackTrace(System.out);
-		  System.out.println("Exception2" + e);
-	      }
-              started0.set(true);
-              System.out.println("didPut0");
-              return null;
-            });
-
-
     int  i = 0;
     while (!started0.get() || !started1.get() || !started2.get()) {
       //System.out.println("testWait");
@@ -388,8 +390,7 @@ class CASFileCacheTest {
       }
     }
 
-    //
-    //assertThat(Files.exists(barPath)).isTrue();
+    assertThat(Files.exists(barPath)).isFalse();
     assertThat(storage.containsKey(barKey)).isFalse();
 
     assertThat(Files.exists(fooPath)).isTrue();
