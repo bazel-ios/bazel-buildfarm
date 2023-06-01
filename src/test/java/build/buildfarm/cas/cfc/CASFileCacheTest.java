@@ -414,14 +414,21 @@ class CASFileCacheTest {
 
   void startInjectingBlobs(int producerTotal, int i, AtomicBoolean d) {
     // Logically we can't jam shit in concurrently larger than the CAS..
+    //
+    // TODO: jmarino - refactor `producerCt` to `injectorCt` - an ivar incremented here
     AtomicInteger producerCt = new AtomicInteger(0);
+
+
+     int producerId = i;
     /*for (int i = 0; i < producerTotal; i++) {
      */
+    /*
         ExecutorService service1 = newSingleThreadExecutor();
         int producerId = i;
         Future<Void> fetchFuture1 =
             service1.submit(
                 () -> {
+		*/
                   System.out.println("willPut.producer" + producerId);
                   Path fooDirPath = null;
                   try {
@@ -461,7 +468,8 @@ class CASFileCacheTest {
 			  blobName = "foo_d";
                       }
 
-                      fooData0 = new byte[511];
+		      // Needs to be big - perhaps we can plumb this in.
+                      fooData0 = new byte[980];
 
 		      // Uniquing
 		      fooData0[0] = (byte)producerId;
@@ -500,8 +508,10 @@ class CASFileCacheTest {
 		      System.out.println("DONE" + st);
 		      d.set(true);
 		  }
+		  /*
 		  return null;
                 });
+		*/
 	/*
     }
     */
@@ -509,6 +519,8 @@ class CASFileCacheTest {
   }
 
 
+
+  // Demonstrates issues without treating the `directory` as an atomic unit - where we fetch and increment reference co
   // TODO: jmarino - effectively implement a subset of CFCExecFileSystem.fetchInputs
   // potentially just call it directly.
   //
@@ -527,7 +539,7 @@ class CASFileCacheTest {
     //
     // Action 2 { foo, straw }
     //
-    byte[] fooData = new byte[50];
+    byte[] fooData = new byte[23];
     ByteString fooBlob = ByteString.copyFrom(fooData);
     Digest fooDigest = DIGEST_UTIL.compute(fooBlob);
     blobs.put(fooDigest, fooBlob);
@@ -566,7 +578,6 @@ class CASFileCacheTest {
     // Maybe just gut this
     Directory emptyDirectory = Directory.getDefaultInstance();
     Digest emptyDigest = DIGEST_UTIL.compute(emptyDirectory);
-
     // root
     //   barSubdir
     //      bar
@@ -622,8 +633,8 @@ class CASFileCacheTest {
     ImmutableList.Builder<Digest> inputDirectories = new ImmutableList.Builder<>();
     decrementReference(barPath);
     fileCache.dump();
-    startInjectingBlobs(2, 1, injectorStatus);
-    //startInjectingBlobs(2, 2, injectorStatus);
+    startInjectingBlobs(3, 1, injectorStatus);
+    startInjectingBlobs(3, 1, injectorStatus);
     fileCache.dump();
     Iterable<ListenableFuture<Void>> fetchedFutures =
         fetchInputs(
@@ -644,6 +655,7 @@ class CASFileCacheTest {
       int j = 0;
       for (ListenableFuture<Void> fetchedFuture : fetchedFutures) {
         if (exception != null || wasInterrupted) {
+	  // TODO: add some testing on this
           fetchedFuture.cancel(true);
         } else {
           try {
@@ -652,6 +664,8 @@ class CASFileCacheTest {
             // just to ensure that no other code can react to interrupt status
             exceptions.add(e.getCause());
           } catch (InterruptedException e) {
+
+	    // TODO: add some testing on this
             fetchedFuture.cancel(true);
             exception = e;
           }
@@ -678,13 +692,19 @@ class CASFileCacheTest {
     Path dirPath = execDir;
     assertThat(Files.isDirectory(dirPath)).isTrue();
 
+    // Given the race condition exibted below this will fail
     assertThat(Files.exists(dirPath.resolve("barSubdir").resolve("bar"))).isTrue();
     assertThat(Files.isDirectory(dirPath.resolve("barSubdir"))).isTrue();
 
     assertThat(Files.exists(dirPath.resolve("strawSubdir").resolve("straw"))).isTrue();
     assertThat(Files.isDirectory(dirPath.resolve("strawSubdir"))).isTrue();
 
-
+    /*
+    Path bp = dirPath.resolve("barSubdir").resolve("bar");
+    byte[] bytes = Files.readAllBytes(bp);
+    String content = new String(bytes,"UTF-8");
+    assertThat(content).isEqualTo("BAD_SHOUDLNT_EVER_GET_HERE_DEBBUGING_HACK");
+    */
 
     /*
     ListenableFuture<Path> dirPathF = linkDirectory(execDir0, rootDirDigest, barDirectoriesIndex, putService);
@@ -792,10 +812,19 @@ class CASFileCacheTest {
                 return null;
               });
     }
+
     // Yeah this is fucking async without a mutex
     String key = fileCache.getKey(digest, fileNode.getIsExecutable());
     System.out.println("put(" + path + ") -> " + filePath +" key:" + key);
+
+    AtomicBoolean injectTotaler = new AtomicBoolean();
+    // injecting blobs, or a way to, of deletion of `bar`. We need to inject this at a precise moment.
     if (key == "0679246d6c4216de0daa08e5523fb2674db2b6599c3b72ff946b488a15290b62"){
+	// TODO(jmarino) clean this up a bit. At this point we want to start
+	// triggering deleting during the `fetchBlobs` operation
+        // SHA of bar e.g. an empty blob of 30 bytes in atomicDirsTest
+	fileCache.dump();
+	startInjectingBlobs(3, 2, injectTotaler);
 
     }
     return transformAsync(
@@ -807,12 +836,11 @@ class CASFileCacheTest {
             inputFiles.add(key);
           }
           if (fileNode.getDigest().getSizeBytes() != 0) {
+	    // Uphold this, consider reworking
+	    assertThat(Files.exists(filePath)).isTrue();
+
             try {
-              // Coordinated with the CAS - consider adding an API for safe path
-              // access
-              synchronized (fileCache) {
                 Files.createLink(filePath, fileCachePath);
-              }
             } catch (IOException e) {
               return immediateFailedFuture(e);
             }

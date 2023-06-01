@@ -2646,24 +2646,33 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       createdTime = path.toFile().lastModified();
     }
 
-    System.out.println("DELETE " + path);
-    // jmarino
-    // BEGIN RACE
-    // a race condition during expiration
-    /*
-          if (true) {
-            try {
-              MILLISECONDS.sleep(1000);
+    System.out.println("DELETE " + path.getFileName().toString());
+
+    if (path.getFileName().toString().equals("0679246d6c4216de0daa08e5523fb2674db2b6599c3b72ff946b488a15290b62")) {
+        // TODO(jmarino) refactor this to some improved stubbing method
+        // SHA of bar e.g. an empty blob of 30 bytes in atomicDirsTest
+	System.out.println("DELETE TAINTED " + path.getFileName().toString());
+
+	// BEGIN RACE ( note )
+	//
+	// a race condition during expiration ( seems to sleep forever )
+	//
+	// This seems to work different w/in-memory jimfs file system tests
+	// as-is - likely due to different atomicty semantics.. We might have a
+	// custom jimfs to deal with this, however the semantics of Apple's
+	// APFS file system ( or others ) are under-test here.
+	  if (true) {
+	    try {
+	      MILLISECONDS.sleep(1000);
 	    } catch (InterruptedException intEx) {
-              throw new IOException(intEx);
-            }
+	      throw new IOException(intEx);
+	    }
 	  }
-	  */
-    // BEGIN RACE
-
-
-    Files.delete(path);
-
+	  // BEGIN RACE
+	   Files.delete(path);
+	} else {
+	    Files.delete(path);
+	}
     if (publishTtlMetric) {
       publishExpirationMetric(createdTime);
     }
@@ -2927,13 +2936,14 @@ public abstract class CASFileCache implements ContentAddressableStorage {
 	  // Add a race condition where the other threads will time out
 	  // jmarino
 	  // BEGIN RACE
+	  /*
           if (inserted) {
             try {
               MILLISECONDS.sleep(10);
 	    } catch (InterruptedException intEx) {
               throw new IOException(intEx);
             }
-	  }
+	  }*/
 	  // END RACE
           Files.delete(writePath);
           if (!inserted) {
