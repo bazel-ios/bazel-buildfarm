@@ -459,45 +459,68 @@ class CASFileCacheTest {
     Path strawPath = fileCache.getPath(strawKey);
 
 
-    Directory barDirectory = Directory.getDefaultInstance();
-    Digest barSubdirDigest = DIGEST_UTIL.compute(barDirectory);
+    // Maybe just gut this
+    Directory emptyDirectory = Directory.getDefaultInstance();
+    Digest emptyDigest = DIGEST_UTIL.compute(emptyDirectory);
 
+    // root
+    //   barSubdir
+    //      bar
+    //      barBarSubdir
+    //   strawSubdir
+    //      straw
     // Is this the root directory
-    Directory barDirectoryXX =
+    Directory barDirectory =
         Directory.newBuilder()
             .addFiles(FileNode.newBuilder().setName("bar").setDigest(barDigest).build())
             .addFiles(FileNode.newBuilder().setName("straw").setDigest(strawDigest).build())
             .addDirectories(
-                DirectoryNode.newBuilder().setName("barSubdir").setDigest(barSubdirDigest).build())
+                DirectoryNode.newBuilder().setName("barBarSubdir").setDigest(emptyDigest).build())
             .build();
+    Digest barDirDigest = DIGEST_UTIL.compute(barDirectory);
 
 
-    Digest barDirDigestXX = DIGEST_UTIL.compute(barDirectoryXX);
-    // Is this the root directory
+    Directory strawDirectory =
+        Directory.newBuilder()
+            .addFiles(FileNode.newBuilder().setName("straw").setDigest(strawDigest).build())
+            .addDirectories(
+                DirectoryNode.newBuilder().setName("strawstrawSubdir").setDigest(emptyDigest).build())
+            .build();
+    Digest strawDirDigest = DIGEST_UTIL.compute(strawDirectory);
+
+
+    // This the root directory
     Directory rootDirectory =
         Directory.newBuilder()
             .addDirectories(
-                DirectoryNode.newBuilder().setName("barSubdir").setDigest(barDirDigestXX).build())
+                DirectoryNode.newBuilder().setName("barSubdir").setDigest(barDirDigest).build())
+            .addDirectories(
+                DirectoryNode.newBuilder().setName("strawSubdir").setDigest(barDirDigest).build())
             .build();
 
     Digest rootDirDigest = DIGEST_UTIL.compute(rootDirectory);
     Map<Digest, Directory> barDirectoriesIndex =
         ImmutableMap.of(
             rootDirDigest, rootDirectory,
-            barDirDigestXX, barDirectoryXX,
-            barSubdirDigest, barDirectory);
+            barDirDigest, barDirectory,
+            strawDirDigest, strawDirectory,
+            emptyDigest, emptyDirectory);
     blobs.put(strawDigest, strawBlob);
 
     // would be /cache/execDir0
     Path execDir0 = root.resolve("execDir0");
 
-    ListenableFuture<Path> dirPathF = linkDirectory(execDir0, barDirDigestXX, barDirectoriesIndex, putService);
+    ListenableFuture<Path> dirPathF = linkDirectory(execDir0, rootDirDigest, barDirectoriesIndex, putService);
 
     try {
     Path dirPath = dirPathF.get();
     assertThat(Files.isDirectory(dirPath)).isTrue();
-    assertThat(Files.exists(dirPath.resolve("bar"))).isTrue();
+
+    assertThat(Files.exists(dirPath.resolve("barSubdir").resolve("bar"))).isTrue();
     assertThat(Files.isDirectory(dirPath.resolve("barSubdir"))).isTrue();
+
+    assertThat(Files.exists(dirPath.resolve("strawSubdir").resolve("straw"))).isTrue();
+    assertThat(Files.isDirectory(dirPath.resolve("strawSubdir"))).isTrue();
     } catch (Exception e) {
 	fail("BAD" + e);
     }
