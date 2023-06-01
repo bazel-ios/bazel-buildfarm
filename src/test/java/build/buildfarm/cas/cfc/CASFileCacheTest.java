@@ -461,7 +461,7 @@ class CASFileCacheTest {
 			  blobName = "foo_d";
                       }
 
-                      fooData0 = new byte[501];
+                      fooData0 = new byte[511];
 
 		      // Uniquing
 		      fooData0[0] = (byte)producerId;
@@ -478,12 +478,14 @@ class CASFileCacheTest {
 		      Path path = fileCache.put(blobDigest, false);
 		      decrementReference(path);
 
+		      /*
 	              byte[] barData = new byte[30];
 		      ByteString barBlob = ByteString.copyFrom(barData);
 		      Digest barDigest = DIGEST_UTIL.compute(barBlob);
 
 		      path = fileCache.put(barDigest, false);
 		      decrementReference(path);
+		      */
 
                   } catch (Exception e) {
                       e.printStackTrace(System.out);
@@ -620,7 +622,9 @@ class CASFileCacheTest {
     ImmutableList.Builder<Digest> inputDirectories = new ImmutableList.Builder<>();
     decrementReference(barPath);
     fileCache.dump();
-    //startInjectingBlobs(2, 1, injectorStatus);
+    startInjectingBlobs(2, 1, injectorStatus);
+    //startInjectingBlobs(2, 2, injectorStatus);
+    fileCache.dump();
     Iterable<ListenableFuture<Void>> fetchedFutures =
         fetchInputs(
             execDir,
@@ -632,7 +636,6 @@ class CASFileCacheTest {
     boolean success = false;
 
 
-    startInjectingBlobs(2, 2, injectorStatus);
 
     try {
       InterruptedException exception = null;
@@ -792,6 +795,9 @@ class CASFileCacheTest {
     // Yeah this is fucking async without a mutex
     String key = fileCache.getKey(digest, fileNode.getIsExecutable());
     System.out.println("put(" + path + ") -> " + filePath +" key:" + key);
+    if (key == "0679246d6c4216de0daa08e5523fb2674db2b6599c3b72ff946b488a15290b62"){
+
+    }
     return transformAsync(
         fileCache.put(digest, fileNode.getIsExecutable(), fetchService),
         (fileCachePath) -> {
