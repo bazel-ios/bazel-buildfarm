@@ -189,6 +189,7 @@ class CFCExecFileSystem implements ExecFileSystem {
                 return null;
               });
     }
+    // Yeah this is fucking async without a mutex
     String key = fileCache.getKey(digest, fileNode.getIsExecutable());
     return transformAsync(
         fileCache.put(digest, fileNode.getIsExecutable(), fetchService),

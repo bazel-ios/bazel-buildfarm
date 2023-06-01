@@ -365,8 +365,13 @@ class CASFileCacheTest {
             dirDigest, directory,
             subdirDigest, subDirectory);
 
+    if (fileName != "bar.ref") {
     // Should this really do this..
+	System.out.println("XXX MakeDir.fileName"  + fileName);
     fileCache.put(fileDigest, false);
+    } else {
+	System.out.println("XXX BarRef");
+    }
 
     ExecutorService putService = newSingleThreadExecutor();
     Path dirPath =
@@ -530,6 +535,7 @@ class CASFileCacheTest {
                 });
     }
 
+    // Effectively this test case ( CFCExecFileSystem's calling of transformAsync )
     int consumerTotal = 3;
     for (int i = 0; i < consumerTotal; i++) {
         ExecutorService service1 = newSingleThreadExecutor();
@@ -701,11 +707,11 @@ class CASFileCacheTest {
     blobs.put(barDigest, barBlob);
     String barKey = fileCache.getKey(barDigest, false);
     Path barPath = fileCache.getPath(barKey);
-    //when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(barDigest), eq(0L)))
-    //    .thenReturn(barBlob.newInput());
+    when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(barDigest), eq(0L)))
+        .thenReturn(barBlob.newInput());
 
     // ADD BAR DATA
-    fileCache.put(barDigest, false);
+    //fileCache.put(barDigest, false);
 
 
     byte[] strawData = new byte[333]; // take us beyond our 1024 limit
@@ -734,7 +740,7 @@ class CASFileCacheTest {
     // Thoretically we should spin several operations concurrnetly that fetch evicting actions
 
     // Logically we can't jam shit in concurrently larger than the CAS..
-    int producerTotal = 4;
+    int producerTotal = 10;
     for (int i = 0; i < producerTotal; i++) {
         ExecutorService service1 = newSingleThreadExecutor();
         int producerId = i;
@@ -771,14 +777,16 @@ class CASFileCacheTest {
 			  blobName = "foo_a";
                           // For file only
                           //fooData0 = new byte[513];
-                          fooData0 = new byte[352];
+                          fooData0 = new byte[176];
                       } else {
                           System.out.println("FOO_B");
                           // For file only
                           // fooData0 = new byte[520];
-                          fooData0 = new byte[359];
+                          fooData0 = new byte[179];
 			  blobName = "foo_b";
                       }
+		      // Uniquing
+		      //fooData0[0] = (byte)producerId;
 
                       //byte[] fooData0 = new byte[499];
                       //fooData0[491] = (byte)producerId;
@@ -882,7 +890,7 @@ class CASFileCacheTest {
       if (!(producerCt.get() < producerTotal)) {
           System.out.println("testWait.producerCt" + producerCt.get());
       }
-      if (i++ > 100) {
+      if (i++ > 1000) {
           break;
       }
       /*

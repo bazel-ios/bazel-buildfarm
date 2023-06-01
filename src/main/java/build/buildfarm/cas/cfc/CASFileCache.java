@@ -576,6 +576,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
   @Override
   public InputStream newInput(Compressor.Value compressor, Digest digest, long offset)
       throws IOException {
+    System.out.println("XXX newInput" + digest);
     try {
       return newLocalInput(compressor, digest, offset);
     } catch (NoSuchFileException e) {
@@ -2648,7 +2649,6 @@ public abstract class CASFileCache implements ContentAddressableStorage {
     // jmarino
     // BEGIN RACE
     // a race condition during expiration
-    /*
           if (true) {
             try {
               MILLISECONDS.sleep(1000);
@@ -2656,7 +2656,6 @@ public abstract class CASFileCache implements ContentAddressableStorage {
               throw new IOException(intEx);
             }
 	  }
-    */
     // BEGIN RACE
 
 
@@ -2923,14 +2922,13 @@ public abstract class CASFileCache implements ContentAddressableStorage {
 	  // Add a race condition where the other threads will time out
 	  // jmarino
 	  // BEGIN RACE
-	  /*
           if (inserted) {
             try {
               MILLISECONDS.sleep(10);
 	    } catch (InterruptedException intEx) {
               throw new IOException(intEx);
             }
-	  }*/
+	  }
 	  // END RACE
           Files.delete(writePath);
           if (!inserted) {
@@ -3132,6 +3130,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       throws IOException {
     checkNotNull(delegate);
 
+    System.out.println("NewInputFallback" + digest);
     if (digest.getSizeBytes() > maxEntrySizeInBytes) {
       return delegate.newInput(compressor, digest, offset);
     }
