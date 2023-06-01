@@ -412,6 +412,100 @@ class CASFileCacheTest {
   }
 
 
+  void startInjectingBlobs(int producerTotal, int i, AtomicBoolean d) {
+    // Logically we can't jam shit in concurrently larger than the CAS..
+    AtomicInteger producerCt = new AtomicInteger(0);
+    /*for (int i = 0; i < producerTotal; i++) {
+     */
+        ExecutorService service1 = newSingleThreadExecutor();
+        int producerId = i;
+        Future<Void> fetchFuture1 =
+            service1.submit(
+                () -> {
+                  System.out.println("willPut.producer" + producerId);
+                  Path fooDirPath = null;
+                  try {
+                      // Fetch [foo, bar] here?
+                      //
+                      // Utilize [foo, bar]
+
+/*
+                      Path strawDirPath = buildFetchableDir(strawDigest, "straw.ref", "straw.dir");
+                      decrementReference(strawDirPath);
+*/
+
+                      // START COUNT:
+                      // 2 ( bar )
+                      // 10 ( start )
+                      // These should race for each other's path: when it tries
+                      // to determine if it doesn't exist - based on the path
+                      //
+                      // We need to cause it to call `refernceIfExists` in the
+                      // commit segment.
+                      //
+                      // This might need to use the directory factory
+                      byte[] fooData0;
+		      String blobName = null;
+                      if (producerId % 2 == 0) {
+                          System.out.println("FOO_A");
+			  blobName = "foo_a";
+                          // For file only
+                          fooData0 = new byte[176];
+                          fooData0 = new byte[279];
+                      } else {
+                          System.out.println("FOO_B");
+                          // For file only
+                          //fooData0 = new byte[111];
+                          fooData0 = new byte[279];
+                          //fooData0 = new byte[176];
+			  blobName = "foo_d";
+                      }
+
+                      fooData0 = new byte[501];
+
+		      // Uniquing
+		      fooData0[0] = (byte)producerId;
+
+		      // We basically need to continously inject bar to get the line
+		      // file already exists for..
+		      // finally, we need to remove it from the storage
+                      ByteString file = ByteString.copyFrom(fooData0);
+                      Digest blobDigest = DIGEST_UTIL.compute(file);
+
+                      String blobKey = fileCache.getKey(blobDigest, /* isExecutable=*/ false);
+                      blobs.put(blobDigest, file);
+
+		      Path path = fileCache.put(blobDigest, false);
+		      decrementReference(path);
+
+	              byte[] barData = new byte[30];
+		      ByteString barBlob = ByteString.copyFrom(barData);
+		      Digest barDigest = DIGEST_UTIL.compute(barBlob);
+
+		      path = fileCache.put(barDigest, false);
+		      decrementReference(path);
+
+                  } catch (Exception e) {
+                      e.printStackTrace(System.out);
+                      System.out.println("Exception.racer: don't go" + e);
+                  }
+
+
+                  int st = producerCt.getAndIncrement();
+		  System.out.println("XXX final count" + st);
+		  if (st == (producerTotal -1)) {
+
+		      System.out.println("DONE" + st);
+		      d.set(true);
+		  }
+		  return null;
+                });
+	/*
+    }
+    */
+	fileCache.dump();
+  }
+
 
   // TODO: jmarino - effectively implement a subset of CFCExecFileSystem.fetchInputs
   // potentially just call it directly.
@@ -431,7 +525,7 @@ class CASFileCacheTest {
     //
     // Action 2 { foo, straw }
     //
-    byte[] fooData = new byte[10];
+    byte[] fooData = new byte[50];
     ByteString fooBlob = ByteString.copyFrom(fooData);
     Digest fooDigest = DIGEST_UTIL.compute(fooBlob);
     blobs.put(fooDigest, fooBlob);
@@ -445,7 +539,7 @@ class CASFileCacheTest {
     when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(fooDigest), eq(0L)))
         .thenReturn(fooBlob.newInput());
 
-    byte[] barData = new byte[2];
+    byte[] barData = new byte[30];
     ByteString barBlob = ByteString.copyFrom(barData);
     Digest barDigest = DIGEST_UTIL.compute(barBlob);
     blobs.put(barDigest, barBlob);
@@ -455,10 +549,10 @@ class CASFileCacheTest {
         .thenReturn(barBlob.newInput());
 
     // ADD BAR DATA
-    //fileCache.put(barDigest, false);
+    fileCache.put(barDigest, false);
 
 
-    byte[] strawData = new byte[333]; // take us beyond our 1024 limit
+    byte[] strawData = new byte[512]; // take us beyond our 1024 limit
     ByteString strawBlob = ByteString.copyFrom(strawData);
     Digest strawDigest = DIGEST_UTIL.compute(strawBlob);
     blobs.put(strawDigest, strawBlob);
@@ -518,11 +612,15 @@ class CASFileCacheTest {
     // would be /cache/execDir0
     Path execDir = root.resolve("execDir0");
 
+    AtomicBoolean injectorStatus = new AtomicBoolean(false);
     ExecutorService putService = newSingleThreadExecutor();
 
 
     ImmutableList.Builder<String> inputFiles = new ImmutableList.Builder<>();
     ImmutableList.Builder<Digest> inputDirectories = new ImmutableList.Builder<>();
+    decrementReference(barPath);
+    fileCache.dump();
+    //startInjectingBlobs(2, 1, injectorStatus);
     Iterable<ListenableFuture<Void>> fetchedFutures =
         fetchInputs(
             execDir,
@@ -532,10 +630,15 @@ class CASFileCacheTest {
             inputDirectories,
 	    putService);
     boolean success = false;
+
+
+    startInjectingBlobs(2, 2, injectorStatus);
+
     try {
       InterruptedException exception = null;
       boolean wasInterrupted = false;
       ImmutableList.Builder<Throwable> exceptions = ImmutableList.builder();
+      int j = 0;
       for (ListenableFuture<Void> fetchedFuture : fetchedFutures) {
         if (exception != null || wasInterrupted) {
           fetchedFuture.cancel(true);
@@ -554,6 +657,18 @@ class CASFileCacheTest {
       }
     } catch (Exception e) {
 	fail("XX" + e);
+    }
+
+    int i = 0;
+    while (true || !injectorStatus.get()) {
+      if (i++ > 1000) {
+          break;
+      }
+      try {
+	  MICROSECONDS.sleep(10000);
+      } catch (InterruptedException intEx) {
+	  fail("int");
+      }
     }
 
 

@@ -2646,9 +2646,11 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       createdTime = path.toFile().lastModified();
     }
 
+    System.out.println("DELETE " + path);
     // jmarino
     // BEGIN RACE
     // a race condition during expiration
+    /*
           if (true) {
             try {
               MILLISECONDS.sleep(1000);
@@ -2656,6 +2658,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
               throw new IOException(intEx);
             }
 	  }
+	  */
     // BEGIN RACE
 
 
@@ -2911,14 +2914,16 @@ public abstract class CASFileCache implements ContentAddressableStorage {
         Entry existingEntry = null;
         boolean inserted = false;
         try {
+          log.log(Level.INFO, "commit createLink" + CASFileCache.this.getPath(key) + " <- " + writePath);
           Files.createLink(CASFileCache.this.getPath(key), writePath);
           existingEntry = storage.putIfAbsent(key, entry);
           inserted = existingEntry == null;
         } catch (FileAlreadyExistsException e) {
           log.log(Level.INFO, "file already exists for " + key + ", nonexistent entry will fail");
         } finally {
-          log.log(Level.INFO, "clean write path " + key + ":" + writePath);
+          log.log(Level.INFO, "clean write path " + key + " <- " + writePath);
 
+	  dump();
 	  // Add a race condition where the other threads will time out
 	  // jmarino
 	  // BEGIN RACE
@@ -3180,6 +3185,15 @@ public abstract class CASFileCache implements ContentAddressableStorage {
         }
         throw ioEx;
       }
+    }
+  }
+  // jmarino: remove
+  public void dump() {
+    System.out.println("dump()");
+    for (Map.Entry<String, Entry> pe : storage.entrySet()) {
+      String key = pe.getKey();
+      Entry e = pe.getValue();
+      System.out.println("dump() refCt " + key + ":" + e.referenceCount);
     }
   }
 }

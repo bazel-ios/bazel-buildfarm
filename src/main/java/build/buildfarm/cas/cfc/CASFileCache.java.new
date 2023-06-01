@@ -3351,4 +3351,50 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       }
     }
   }
+  // jmarino: remove
+  public String keySummary(String key) {
+    return key.substring(0, 7);
+  }
+
+  // jmarino: remove
+  public void dump() {
+    for (Map.Entry<String, Entry> pe : storage.entrySet()) {
+      String key = pe.getKey();
+      Entry e = pe.getValue();
+      System.out.println("dump() refCt " + keySummary(key) + ":" + e.referenceCount);
+    }
+
+    for (Map.Entry<String, Integer> pe : keyReferences.entrySet()) {
+      String key = pe.getKey();
+      Integer ct = pe.getValue();
+      System.out.println("dump() keyCt " + keySummary(key) + ":" + ct);
+
+      Entry en = storage.get(key);
+      if (en == null) {
+        // Perhaps a fatal error
+        System.out.println("dump() Missing entry for key " + key);
+        continue;
+      }
+
+      // See other issue
+      if (en.referenceCount < ct) {
+        System.out.println(
+            "dump() Unmatched count LT for key "
+                + keySummary(key)
+                + " "
+                + ct
+                + " vs "
+                + en.referenceCount);
+      }
+      if (en.referenceCount > ct) {
+        System.out.println(
+            "dump() Unmatched count GT for key "
+                + keySummary(key)
+                + " "
+                + ct
+                + " vs "
+                + en.referenceCount);
+      }
+    }
+  }
 }
