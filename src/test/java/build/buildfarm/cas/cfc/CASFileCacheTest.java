@@ -33,6 +33,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
 
+import static com.google.common.util.concurrent.Futures.immediateFuture;
+import static com.google.common.util.concurrent.Futures.transformAsync;
+
 import build.bazel.remote.execution.v2.Compressor;
 import build.bazel.remote.execution.v2.Digest;
 import build.bazel.remote.execution.v2.Directory;
@@ -321,16 +324,6 @@ class CASFileCacheTest {
   }
 
 
-  // TODO: jmarino - effectively implement a subset of CFCExecFileSystem.fetchInputs
-  // potentially just call it directly.
-  //
-  // fetch:
-  // directory(foo_1)
-  // directory(foo_2) // big file ( on disk [y/n] )
-  // directory(foo_3)
-  //
-  // exec: ( cleanup )
-  // directory(foo_2) // big file ( on disk )
   Path buildFetchableDir(Digest fileDigest, String fileName, String subdirName) throws IOException, InterruptedException {
     // FIXME: assume they loaded this into the blogs
     //blobs.put(fileDigest, file);
@@ -410,6 +403,18 @@ class CASFileCacheTest {
     assertThat(Files.isDirectory(dirPath.resolve("subdir"))).isTrue();
   }
 
+
+
+  // TODO: jmarino - effectively implement a subset of CFCExecFileSystem.fetchInputs
+  // potentially just call it directly.
+  //
+  // fetch:
+  // directory(foo_1)
+  // directory(foo_2) // big file ( on disk [y/n] )
+  // directory(foo_3)
+  //
+  // exec: ( cleanup )
+  // directory(foo_2) // big file ( on disk )
   @Test
   public void commitRacer() throws IOException, InterruptedException {
     // Simulate an action with foo data and bar data
@@ -471,16 +476,38 @@ class CASFileCacheTest {
         ImmutableMap.of(
             barDirDigest, directory,
             barSubdirDigest, barDirectory);
+    blobs.put(strawDigest, strawBlob);
 
 
-    Path dirPath =
-        getInterruptiblyOrIOException(
-            fileCache.putDirectory(barDirDigest, directoriesIndex, putService));
+
+    // would be /cache/execDir0
+    Path execDir0 = root.resolve("execDir0");
+
+    ListenableFuture<Path> dirPathF = linkDirectory(execDir0, barDirDigest, directoriesIndex, putService);
+    try {
+    Path dirPath = dirPathF.get();
     assertThat(Files.isDirectory(dirPath)).isTrue();
     assertThat(Files.exists(dirPath.resolve("bar"))).isTrue();
     assertThat(Files.isDirectory(dirPath.resolve("barSubdir"))).isTrue();
+    } catch (Exception e) {
+	fail("BAD" + e);
+    }
 
   }
+
+  @SuppressWarnings("ConstantConditions")
+  private ListenableFuture<Path> linkDirectory(
+      Path execPath, Digest digest, Map<Digest, Directory> directoriesIndex, ExecutorService fetchService) {
+    return transformAsync(
+        fileCache.putDirectory(digest, directoriesIndex, fetchService),
+        (cachePath) -> {
+	  System.out.println("ToExecPath" + execPath);
+          Files.createSymbolicLink(execPath, cachePath);
+          return immediateFuture(execPath);
+        },
+        fetchService);
+  }
+
 
   // jmarino: complete this
   @Test
