@@ -136,7 +136,7 @@ class CASFileCacheTest {
                 })
         .when(delegate)
         .findMissingBlobs(any(Iterable.class));
-    blobs = Maps.newHashMap();
+    blobs = Maps.newConcurrentMap();
     putService = newSingleThreadExecutor();
     storage = Maps.newConcurrentMap();
     expireService = newSingleThreadExecutor();
@@ -294,20 +294,20 @@ class CASFileCacheTest {
 
     Map<Digest, Directory> directoriesIndex = null;
     for (Digest fileDigest : fileDigests) {
-	System.out.println("XXX Add file" + fileDigest);
-	Directory directory =
-	    Directory.newBuilder()
-		.addFiles(FileNode.newBuilder().setName("file").setDigest(fileDigest).build())
-		.addDirectories(
-		    DirectoryNode.newBuilder().setName("subdir").setDigest(subdirDigest).build())
-		.build();
-	Digest dirDigest = DIGEST_UTIL.compute(directory);
-	dirsBuilder.put(dirDigest, directory);
+        System.out.println("XXX Add file" + fileDigest);
+        Directory directory =
+            Directory.newBuilder()
+                .addFiles(FileNode.newBuilder().setName("file").setDigest(fileDigest).build())
+                .addDirectories(
+                    DirectoryNode.newBuilder().setName("subdir").setDigest(subdirDigest).build())
+                .build();
+        Digest dirDigest = DIGEST_UTIL.compute(directory);
+        dirsBuilder.put(dirDigest, directory);
 
-	directoriesIndex =
-	    ImmutableMap.of(
-		dirDigest, directory,
-		subdirDigest, subDirectory);
+        directoriesIndex =
+            ImmutableMap.of(
+                dirDigest, directory,
+                subdirDigest, subDirectory);
 
     }
 
@@ -345,6 +345,33 @@ class CASFileCacheTest {
     System.out.println("BUILT FetchableDir" + dirDigest);
     return dirPath;
   }
+
+  Digest buildFetchableDirDigest(Digest fileDigest, String fileName, String subdirName) throws IOException, InterruptedException {
+    // FIXME: assume they loaded this into the blogs
+    //blobs.put(fileDigest, file);
+    Directory subDirectory = Directory.getDefaultInstance();
+    Digest subdirDigest = DIGEST_UTIL.compute(subDirectory);
+    Directory directory =
+        Directory.newBuilder()
+            .addFiles(FileNode.newBuilder().setName(fileName).setDigest(fileDigest).build())
+            .addDirectories(
+                DirectoryNode.newBuilder().setName(subdirName).setDigest(subdirDigest).build())
+            .build();
+
+    Digest dirDigest = DIGEST_UTIL.compute(directory);
+    Map<Digest, Directory> directoriesIndex =
+        ImmutableMap.of(
+            dirDigest, directory,
+            subdirDigest, subDirectory);
+
+    ExecutorService putService = newSingleThreadExecutor();
+    Path dirPath =
+        getInterruptiblyOrIOException(
+            fileCache.putDirectory(dirDigest, directoriesIndex, putService));
+    System.out.println("BUILT FetchableDir" + dirDigest);
+    return dirDigest;
+  }
+
 
   // jmarino - this is a basic test of of the method buildFetchableDir
   @Test
@@ -426,15 +453,15 @@ class CASFileCacheTest {
         service0.submit(
             () -> {
               System.out.println("willPut0");
-	      try {
-		  fileCache.put(strawDigest, false);
-		  // Fetch [foo, straw] here?
+              try {
+                  fileCache.put(strawDigest, false);
+                  // Fetch [foo, straw] here?
 
-		  // Utilize [foo, straw]
+                  // Utilize [foo, straw]
               } catch (Exception e) {
-		  e.printStackTrace(System.out);
-		  System.out.println("Exception2" + e);
-	      }
+                  e.printStackTrace(System.out);
+                  System.out.println("Exception2" + e);
+              }
               started0.set(true);
               System.out.println("didPut0");
               return null;
@@ -446,106 +473,112 @@ class CASFileCacheTest {
     int producerTotal = 3;
     for (int i = 0; i < producerTotal; i++) {
         ExecutorService service1 = newSingleThreadExecutor();
-	int producerId = i;
-	Future<Void> fetchFuture1 =
-	    service1.submit(
-		() -> {
-		  System.out.println("willPut.producer" + producerId);
+        int producerId = i;
+        Future<Void> fetchFuture1 =
+            service1.submit(
+                () -> {
+                  System.out.println("willPut.producer" + producerId);
 
-		  try {
-		      // Fetch [foo, bar] here?
-		      //
-		      // Utilize [foo, bar]
+                  try {
+                      // Fetch [foo, bar] here?
+                      //
+                      // Utilize [foo, bar]
 
 /*
-		      Path strawDirPath = buildFetchableDir(strawDigest, "straw.ref", "straw.dir");
-		      decrementReference(strawDirPath);
+                      Path strawDirPath = buildFetchableDir(strawDigest, "straw.ref", "straw.dir");
+                      decrementReference(strawDirPath);
 */
-		      Path fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
-		      Path barDirPath = buildFetchableDir(barDigest, "bar.ref", "bar.dir");
+                      Digest fooDirDigest = buildFetchableDirDigest(fooDigest, "foo.ref", "foo.dir");
+                      Path fooDirPath = fileCache.getDirectoryPath(fooDirDigest);
 
-		      if (!Files.exists(barPath)) {
-			  System.out.println("Missing paths");
-			  return null;
-		      }
-		      if (!Files.exists(barDirPath)) {
-			  System.out.println("Missing paths");
-			  return null;
-		      }
-		      if (!Files.exists(fooDirPath)) {
-			  System.out.println("Missing paths");
-			  return null;
-		      }
+                      Digest barDirDigest = buildFetchableDirDigest(barDigest, "bar.ref", "bar.dir");
+                      Path barDirPath = fileCache.getDirectoryPath(barDirDigest);
 
-		      decrementReference(barDirPath);
-		      decrementReference(fooDirPath);
-		      // Hmm: seems like this blows out
-		      //decrementReference(fooDirPath);
-		  } catch (Exception e) {
-		      e.printStackTrace(System.out);
-		      System.out.println("Exception1" + e);
-		  }
+                      if (!Files.exists(barPath)) {
+                          System.out.println("Missing paths");
+                          return null;
+                      }
+                      if (!Files.exists(barDirPath)) {
+                          System.out.println("Missing paths");
+                          return null;
+                      }
+                      if (!Files.exists(fooDirPath)) {
+                          System.out.println("Missing paths");
+                          return null;
+                      }
 
-		  producerCt.getAndIncrement();
-		  //fileCache.put(strawDigest, false);
-		  System.out.println("didPut.producer" + producerId);
-		  return null;
-		});
+                      fileCache.decrementReferences(
+                          ImmutableList.of(barKey, fooKey),
+                          ImmutableList.of(barDirDigest, fooDirDigest));
+
+                      // Probably a bug - should go above
+                      // decrementReference(barDirPath);
+
+                  } catch (Exception e) {
+                      e.printStackTrace(System.out);
+                      System.out.println("Exception1" + e);
+                  }
+
+                  producerCt.getAndIncrement();
+                  //fileCache.put(strawDigest, false);
+                  System.out.println("didPut.producer" + producerId);
+                  return null;
+                });
     }
 
     int consumerTotal = 3;
     for (int i = 0; i < consumerTotal; i++) {
         ExecutorService service1 = newSingleThreadExecutor();
-	int consumerId = i;
-	Future<Void> fetchFuture1 =
-	    service1.submit(
-		() -> {
-		  System.out.println("willPut.consumer" + consumerId);
+        int consumerId = i;
+        Future<Void> fetchFuture1 =
+            service1.submit(
+                () -> {
+                  System.out.println("willPut.consumer" + consumerId);
 
-		  try {
-		      // Fetch [foo, bar] here?
-		      //
-		      // Utilize [foo, bar]
-		      ByteString file = ByteString.copyFromUtf8("Wo" + consumerId);
-		      Digest fileDigest = DIGEST_UTIL.compute(file);
-		      blobs.put(fileDigest, file);
-		      Path strawDirPath = buildFetchableDir(fileDigest, "straw.ref", "straw.dir");
+                  try {
+                      // Fetch [foo, bar] here?
+                      //
+                      // Utilize [foo, bar]
+                      ByteString file = ByteString.copyFromUtf8("Wo" + consumerId);
+                      Digest fileDigest = DIGEST_UTIL.compute(file);
+                      blobs.put(fileDigest, file);
+                      Path strawDirPath = buildFetchableDir(fileDigest, "straw.ref", "straw.dir");
 
-		      /*
-		      Path fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
-		      */
-		      Path barDirPath = buildFetchableDir(barDigest, "bar.ref", "bar.dir");
+                      /*
+                      Path fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
+                      */
+                      Path barDirPath = buildFetchableDir(barDigest, "bar.ref", "bar.dir");
 
-		      if (!Files.exists(barPath)) {
-			  System.out.println("Missing paths");
-			  return null;
-		      }
-		      if (!Files.exists(barDirPath)) {
-			  System.out.println("Missing paths");
-			  return null;
-		      }
-		      if (!Files.exists(strawDirPath)) {
-			  System.out.println("Missing paths");
-			  return null;
-		      }
-		      decrementReference(barDirPath);
-		      /*
-		      decrementReference(fooPath);
-		      */
-		      decrementReference(barPath);
-		      // Hmm: seems like this blows out
+                      if (!Files.exists(barPath)) {
+                          System.out.println("Missing paths");
+                          return null;
+                      }
+                      if (!Files.exists(barDirPath)) {
+                          System.out.println("Missing paths");
+                          return null;
+                      }
+                      if (!Files.exists(strawDirPath)) {
+                          System.out.println("Missing paths");
+                          return null;
+                      }
+                      decrementReference(barDirPath);
+                      /*
+                      decrementReference(fooPath);
+                      */
+                      decrementReference(barPath);
+                      // Hmm: seems like this blows out
 
-		      decrementReference(strawDirPath);
-		  } catch (Exception e) {
-		      e.printStackTrace(System.out);
-		      System.out.println("Exception1" + e);
-		  }
+                      decrementReference(strawDirPath);
+                  } catch (Exception e) {
+                      e.printStackTrace(System.out);
+                      System.out.println("Exception1" + e);
+                  }
 
-		  consumerCt.getAndIncrement();
-		  //fileCache.put(strawDigest, false);
-		  System.out.println("didPut.consumer" + consumerId);
-		  return null;
-		});
+                  consumerCt.getAndIncrement();
+                  //fileCache.put(strawDigest, false);
+                  System.out.println("didPut.consumer" + consumerId);
+                  return null;
+                });
     }
 
 
@@ -644,7 +677,7 @@ class CASFileCacheTest {
     //
     // Action 2 { foo, straw }
     //
-    byte[] fooData = new byte[499];
+    byte[] fooData = new byte[10];
     ByteString fooBlob = ByteString.copyFrom(fooData);
     Digest fooDigest = DIGEST_UTIL.compute(fooBlob);
     blobs.put(fooDigest, fooBlob);
@@ -653,20 +686,23 @@ class CASFileCacheTest {
     Path fooPath = fileCache.getPath(fooKey);
 
     // foo is not loaded
-    // fileCache.put(fooDigest, false);
+    fileCache.put(fooDigest, false);
 
     when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(fooDigest), eq(0L)))
         .thenReturn(fooBlob.newInput());
 
-    byte[] barData = new byte[331];
+    byte[] barData = new byte[2];
     ByteString barBlob = ByteString.copyFrom(barData);
     Digest barDigest = DIGEST_UTIL.compute(barBlob);
     blobs.put(barDigest, barBlob);
     String barKey = fileCache.getKey(barDigest, false);
     Path barPath = fileCache.getPath(barKey);
-    //fileCache.put(barDigest, false);
     when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(barDigest), eq(0L)))
         .thenReturn(barBlob.newInput());
+
+    // ADD BAR DATA
+    //fileCache.put(barDigest, false);
+
 
     byte[] strawData = new byte[333]; // take us beyond our 1024 limit
     ByteString strawBlob = ByteString.copyFrom(strawData);
@@ -693,88 +729,154 @@ class CASFileCacheTest {
 
     // Thoretically we should spin several operations concurrnetly that fetch evicting actions
 
-    int producerTotal = 1;
+    // Logically we can't jam shit in concurrently larger than the CAS..
+    int producerTotal = 2;
     for (int i = 0; i < producerTotal; i++) {
         ExecutorService service1 = newSingleThreadExecutor();
-	int producerId = i;
-	Future<Void> fetchFuture1 =
-	    service1.submit(
-		() -> {
-		  System.out.println("willPut.producer" + producerId);
+        int producerId = i;
+        Future<Void> fetchFuture1 =
+            service1.submit(
+                () -> {
+                  System.out.println("willPut.producer" + producerId);
 
-		  try {
-		      // Fetch [foo, bar] here?
-		      //
-		      // Utilize [foo, bar]
+                  Path fooDirPath = null;
+                  try {
+                      // Fetch [foo, bar] here?
+                      //
+                      // Utilize [foo, bar]
 
 /*
-		      Path strawDirPath = buildFetchableDir(strawDigest, "straw.ref", "straw.dir");
-		      decrementReference(strawDirPath);
+                      Path strawDirPath = buildFetchableDir(strawDigest, "straw.ref", "straw.dir");
+                      decrementReference(strawDirPath);
 */
 
-		      Path fooDirPath;
-		      if (producerId % 2 == 0) {
-			  //fooDirPath = buildFetchableDir(fooDigest, "foo.ref", "foo.dir");
-		      } else {
+                      // START COUNT:
+                      // 2 ( bar )
+                      // 10 ( start )
+                      // These should race for each other's path: when it tries
+                      // to determine if it doesn't exist - based on the path
+                      //
+                      // We need to cause it to call `refernceIfExists` in the
+                      // commit segment.
+                      //
+                      // This might need to use the directory factory
+                      byte[] fooData0;
+                      if (producerId % 2 == 0) {
+                          System.out.println("FOO_A");
+                          // For file only
+                          //fooData0 = new byte[513];
+                          fooData0 = new byte[352];
+                      } else {
+                          System.out.println("FOO_B");
+                          // For file only
+                          // fooData0 = new byte[520];
+                          fooData0 = new byte[359];
+                      }
 
-		//	  fooDirPath = buildFetchableDir(strawDigest, "straw.ref", "straw.dir");
-		      }
+                      //byte[] fooData0 = new byte[499];
+                      //fooData0[491] = (byte)producerId;
+                      //ByteString file = ByteString.copyFromUtf8("Wo" + producerId);
+                      ByteString file = ByteString.copyFrom(fooData0);
+                      Digest blobDigest = DIGEST_UTIL.compute(file);
+
+		      String blobKey = fileCache.getKey(blobDigest, /* isExecutable=*/ false);
+                      blobs.put(blobDigest, file);
+
+                      if (!Files.exists(barPath)) {
+                          fileCache.put(barDigest, false);
+
+                          // Too big / complex for now
+                          //buildFetchableDir(barDigest, "bar.ref", "bar.dir");
+                          System.out.println("Missing bar paths - had to add");
+                      }
 
 
-		      byte[] fooData0 = new byte[499];
-		      fooData0[491] = (byte)producerId;
-		      ByteString file = ByteString.copyFrom(fooData0);
+                      System.out.println("Make blobDigest: " + blobDigest);
+                      //buildFetchableDir:161 bytes
+                      Digest blobDirDigest = buildFetchableDirDigest(blobDigest, "blob.ref", "blob.dir");
 
-		      //ByteString file = ByteString.copyFromUtf8("Wo" + producerId);
-		      Digest blobDigest = DIGEST_UTIL.compute(file);
-		      blobs.put(blobDigest, file);
+                      Path blobDirPath  = fileCache.getDirectoryPath(blobDirDigest);
 
-	              System.out.println("FooDigest" + blobDigest);
-		      fooDirPath = fileCache.put(blobDigest, false);
-	              System.out.println("FooDirPath" + fooDirPath);
+                      Digest barDirDigest = buildFetchableDirDigest(barDigest, "bar.ref", "bar.dir");
+                      Path barDirPath = fileCache.getDirectoryPath(barDirDigest);
+
+                      //fooDirPath = fileCache.put(blobDigest, false);
+
+                      if (!Files.exists(barPath)) {
+                          System.out.println("Missing bar paths - fatal");
+                          return null;
+                      }
 
 
-		      Path barDirPath = buildFetchableDir(barDigest, "bar.ref", "bar.dir");
+                      /*
+                      Path barDirPath = buildFetchableDir(barDigest, "bar.ref", "bar.dir");
+                      if (!Files.exists(barPath)) {
+                          System.out.println("Missing paths");
+                          return null;
+                      }
+                      if (!Files.exists(barDirPath)) {
+                          System.out.println("Missing paths");
+                          return null;
+                      }
+*/
 
-		      if (!Files.exists(barPath)) {
-			  System.out.println("Missing paths");
-			  return null;
-		      }
-		      if (!Files.exists(barDirPath)) {
-			  System.out.println("Missing paths");
-			  return null;
-		      }
-		      if (!Files.exists(fooDirPath)) {
-			  System.out.println("Missing paths");
-			  return null;
-		      }
+                      if (!Files.exists(blobDirPath)) {
+                          System.out.println("Missing paths");
+                          producerCt.getAndIncrement();
+                          return null;
+                      }
 
-		      decrementReference(barDirPath);
-		      decrementReference(fooDirPath);
-		      // Hmm: seems like this blows out
-		      //decrementReference(fooDirPath);
-		  } catch (Exception e) {
-		      e.printStackTrace(System.out);
-		      System.out.println("Exception1" + e);
-		  }
+                      fileCache.decrementReferences(
+                          ImmutableList.of(barKey, blobKey),
+                          ImmutableList.of(barDirDigest, blobDirDigest));
+                      producerCt.getAndIncrement();
 
-		  producerCt.getAndIncrement();
-		  //fileCache.put(strawDigest, false);
-		  System.out.println("didPut.producer" + producerId);
-		  return null;
-		});
+                      /*
+                      decrementReference(barDirPath);
+                      */
+                      //decrementReference(fooDirPath);
+                      // Hmm: seems like this blows out
+                      //decrementReference(fooDirPath);
+                  } catch (Exception e) {
+                      e.printStackTrace(System.out);
+                      System.out.println("Exception.racer: " + e);
+                      producerCt.getAndIncrement();
+                  }
+
+
+                  final Path fooDirPath2 = fooDirPath;
+                  /*
+                    Future<Void> putFuture2 =
+                        newSingleThreadExecutor().submit(
+                            () -> {
+                              decrementReference(fooDirPath2);
+                              System.out.println("didDec2");
+                              producerCt.getAndIncrement();
+                              return null;
+                            });
+                            */
+
+
+                  //fileCache.put(strawDigest, false);
+                  System.out.println("didPut.producer" + producerId);
+                  return null;
+                });
     }
     int consumerTotal = 1;
 
-    int  i = 0;
-    while ((producerCt.get() < (producerTotal - 1)) || (consumerCt.get() < (consumerTotal - 1))) {
-      if (!(producerCt.get() < (producerTotal - 1))) {
+    int i = 0;
+    while (producerCt.get() < (producerTotal)) {
+      if (!(producerCt.get() < producerTotal)) {
           System.out.println("testWait.producerCt" + producerCt.get());
       }
+      if (i++ > 10000) {
+          break;
+      }
+      /*
       if (!(consumerCt.get() < (consumerTotal - 1))) {
           System.out.println("testWait.consumerCt" + consumerCt.get());
-      }
-      MICROSECONDS.sleep(1000);
+      }*/
+      MICROSECONDS.sleep(10000);
     }
     assertThat(producerCt.get()).isEqualTo(producerTotal);
 
@@ -812,7 +914,7 @@ class CASFileCacheTest {
               started1.set(true);
               System.out.println("willPut1");
               fileCache.put(strawDigest, false);
-	      // We'll never run this
+              // We'll never run this
               System.out.println("didPut1");
               return null;
             });
