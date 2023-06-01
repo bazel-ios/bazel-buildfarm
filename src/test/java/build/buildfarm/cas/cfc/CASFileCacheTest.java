@@ -516,9 +516,59 @@ class CASFileCacheTest {
     blobs.put(strawDigest, strawBlob);
 
     // would be /cache/execDir0
-    Path execDir0 = root.resolve("execDir0");
+    Path execDir = root.resolve("execDir0");
 
     ExecutorService putService = newSingleThreadExecutor();
+
+
+    ImmutableList.Builder<String> inputFiles = new ImmutableList.Builder<>();
+    ImmutableList.Builder<Digest> inputDirectories = new ImmutableList.Builder<>();
+    Iterable<ListenableFuture<Void>> fetchedFutures =
+        fetchInputs(
+            execDir,
+            rootDirDigest,
+            barDirectoriesIndex,
+            inputFiles,
+            inputDirectories,
+	    putService);
+    boolean success = false;
+    try {
+      InterruptedException exception = null;
+      boolean wasInterrupted = false;
+      ImmutableList.Builder<Throwable> exceptions = ImmutableList.builder();
+      for (ListenableFuture<Void> fetchedFuture : fetchedFutures) {
+        if (exception != null || wasInterrupted) {
+          fetchedFuture.cancel(true);
+        } else {
+          try {
+            fetchedFuture.get();
+          } catch (ExecutionException e) {
+            // just to ensure that no other code can react to interrupt status
+            exceptions.add(e.getCause());
+          } catch (InterruptedException e) {
+            fetchedFuture.cancel(true);
+            exception = e;
+          }
+        }
+        wasInterrupted = Thread.interrupted() || wasInterrupted;
+      }
+    } catch (Exception e) {
+	fail("XX" + e);
+    }
+
+
+    Path dirPath = execDir;
+    assertThat(Files.isDirectory(dirPath)).isTrue();
+
+    assertThat(Files.exists(dirPath.resolve("barSubdir").resolve("bar"))).isTrue();
+    assertThat(Files.isDirectory(dirPath.resolve("barSubdir"))).isTrue();
+
+    assertThat(Files.exists(dirPath.resolve("strawSubdir").resolve("straw"))).isTrue();
+    assertThat(Files.isDirectory(dirPath.resolve("strawSubdir"))).isTrue();
+
+
+
+    /*
     ListenableFuture<Path> dirPathF = linkDirectory(execDir0, rootDirDigest, barDirectoriesIndex, putService);
 
     try {
@@ -534,6 +584,7 @@ class CASFileCacheTest {
 	fail("BAD" + e);
     }
 
+    */
   }
 
   private Iterable<ListenableFuture<Void>> fetchInputs(
