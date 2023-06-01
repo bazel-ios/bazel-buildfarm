@@ -503,7 +503,7 @@ class CASFileCacheTest {
             .addDirectories(
                 DirectoryNode.newBuilder().setName("barSubdir").setDigest(barDirDigest).build())
             .addDirectories(
-                DirectoryNode.newBuilder().setName("strawSubdir").setDigest(barDirDigest).build())
+                DirectoryNode.newBuilder().setName("strawSubdir").setDigest(strawDirDigest).build())
             .build();
 
     Digest rootDirDigest = DIGEST_UTIL.compute(rootDirectory);
@@ -640,6 +640,7 @@ class CASFileCacheTest {
     return listeningDecorator(fetchService)
         .submit(
             () -> {
+	      System.out.println("MakeLink" + symlinkPath);
               Files.createSymbolicLink(symlinkPath, relativeTargetPath);
               return null;
             });
@@ -652,7 +653,7 @@ class CASFileCacheTest {
     return transformAsync(
         fileCache.putDirectory(digest, directoriesIndex, fetchService),
         (cachePath) -> {
-	  System.out.println("ToExecPath" + execPath);
+	  System.out.println("linkDirectory ToExecPath" + execPath);
           Files.createSymbolicLink(execPath, cachePath);
           return immediateFuture(execPath);
         },
@@ -675,6 +676,7 @@ class CASFileCacheTest {
     }
     // Yeah this is fucking async without a mutex
     String key = fileCache.getKey(digest, fileNode.getIsExecutable());
+    System.out.println("put(" + path + ") -> " + filePath +" key:" + key);
     return transformAsync(
         fileCache.put(digest, fileNode.getIsExecutable(), fetchService),
         (fileCachePath) -> {
