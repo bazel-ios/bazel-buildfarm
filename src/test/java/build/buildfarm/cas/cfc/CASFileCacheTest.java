@@ -33,14 +33,22 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.Iterables.concat;
+import static com.google.common.util.concurrent.Futures.allAsList;
+import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
 import static com.google.common.util.concurrent.Futures.immediateFuture;
+import static com.google.common.util.concurrent.Futures.transform;
 import static com.google.common.util.concurrent.Futures.transformAsync;
+import static com.google.common.util.concurrent.MoreExecutors.listeningDecorator;
 
 import build.bazel.remote.execution.v2.Compressor;
 import build.bazel.remote.execution.v2.Digest;
 import build.bazel.remote.execution.v2.Directory;
 import build.bazel.remote.execution.v2.DirectoryNode;
 import build.bazel.remote.execution.v2.FileNode;
+import build.bazel.remote.execution.v2.SymlinkNode;
 import build.bazel.remote.execution.v2.RequestMetadata;
 import build.buildfarm.cas.ContentAddressableStorage;
 import build.buildfarm.cas.ContentAddressableStorage.Blob;
@@ -510,6 +518,7 @@ class CASFileCacheTest {
     // would be /cache/execDir0
     Path execDir0 = root.resolve("execDir0");
 
+    ExecutorService putService = newSingleThreadExecutor();
     ListenableFuture<Path> dirPathF = linkDirectory(execDir0, rootDirDigest, barDirectoriesIndex, putService);
 
     try {
@@ -527,6 +536,65 @@ class CASFileCacheTest {
 
   }
 
+  private Iterable<ListenableFuture<Void>> fetchInputs(
+      Path path,
+      Digest directoryDigest,
+      Map<Digest, Directory> directoriesIndex,
+      ImmutableList.Builder<String> inputFiles,
+      ImmutableList.Builder<Digest> inputDirectories,
+      ExecutorService fetchService
+      )
+      throws IOException {
+
+    Directory directory = directoriesIndex.get(directoryDigest);
+    checkNotNull(directory);
+    Iterable<ListenableFuture<Void>> downloads =
+        directory.getFilesList().stream()
+            .map(fileNode -> put(path, fileNode, inputFiles, fetchService))
+            .collect(ImmutableList.toImmutableList());
+    downloads =
+        concat(
+            downloads,
+            directory.getSymlinksList().stream()
+                .map(symlinkNode -> putSymlink(path, symlinkNode, fetchService))
+                .collect(ImmutableList.toImmutableList()));
+
+    boolean linkInputDirectories = false;
+    for (DirectoryNode directoryNode : directory.getDirectoriesList()) {
+      Digest digest = directoryNode.getDigest();
+      String name = directoryNode.getName();
+      Path dirPath = path.resolve(name);
+      if (!linkInputDirectories) {
+        Files.createDirectories(dirPath);
+        downloads =
+            concat(
+                downloads,
+                fetchInputs(
+                    dirPath,
+                    digest,
+                    directoriesIndex,
+                    inputFiles,
+                    inputDirectories,
+		    fetchService));
+
+      }
+    }
+    return downloads;
+  }
+
+  private ListenableFuture<Void> putSymlink(Path path, SymlinkNode symlinkNode, ExecutorService fetchService) {
+    Path symlinkPath = path.resolve(symlinkNode.getName());
+    Path relativeTargetPath = path.getFileSystem().getPath(symlinkNode.getTarget());
+    checkState(!relativeTargetPath.isAbsolute());
+    return listeningDecorator(fetchService)
+        .submit(
+            () -> {
+              Files.createSymbolicLink(symlinkPath, relativeTargetPath);
+              return null;
+            });
+
+  }
+
   @SuppressWarnings("ConstantConditions")
   private ListenableFuture<Path> linkDirectory(
       Path execPath, Digest digest, Map<Digest, Directory> directoriesIndex, ExecutorService fetchService) {
@@ -539,6 +607,47 @@ class CASFileCacheTest {
         },
         fetchService);
   }
+
+  @SuppressWarnings("ConstantConditions")
+  private ListenableFuture<Void> put(
+      Path path, FileNode fileNode, ImmutableList.Builder<String> inputFiles, ExecutorService fetchService) {
+    Path filePath = path.resolve(fileNode.getName());
+    Digest digest = fileNode.getDigest();
+    if (digest.getSizeBytes() == 0) {
+      return listeningDecorator(fetchService)
+          .submit(
+              () -> {
+                Files.createFile(filePath);
+                // ignore executable
+                return null;
+              });
+    }
+    // Yeah this is fucking async without a mutex
+    String key = fileCache.getKey(digest, fileNode.getIsExecutable());
+    return transformAsync(
+        fileCache.put(digest, fileNode.getIsExecutable(), fetchService),
+        (fileCachePath) -> {
+          checkNotNull(key);
+          // we saw null entries in the built immutable list without synchronization
+          synchronized (inputFiles) {
+            inputFiles.add(key);
+          }
+          if (fileNode.getDigest().getSizeBytes() != 0) {
+            try {
+              // Coordinated with the CAS - consider adding an API for safe path
+              // access
+              synchronized (fileCache) {
+                Files.createLink(filePath, fileCachePath);
+              }
+            } catch (IOException e) {
+              return immediateFailedFuture(e);
+            }
+          }
+          return immediateFuture(null);
+        },
+        fetchService);
+  }
+
 
 
   // jmarino: complete this
