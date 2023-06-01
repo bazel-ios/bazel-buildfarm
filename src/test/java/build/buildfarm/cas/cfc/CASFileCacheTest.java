@@ -520,7 +520,7 @@ class CASFileCacheTest {
 
 
 
-  // Demonstrates issues without treating the `directory` as an atomic unit - where we fetch and increment reference co
+  // Demonstrates issues without treating the `directory` as an atomic unit - where we fetch and increment reference counts async during the fetch operation
   // TODO: jmarino - effectively implement a subset of CFCExecFileSystem.fetchInputs
   // potentially just call it directly.
   //
