@@ -21,6 +21,7 @@ import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 import static com.google.common.util.concurrent.MoreExecutors.shutdownAndAwaitTermination;
 import static java.util.concurrent.Executors.newSingleThreadExecutor;
 import static java.util.concurrent.TimeUnit.MICROSECONDS;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.any;
@@ -733,7 +734,7 @@ class CASFileCacheTest {
     // Thoretically we should spin several operations concurrnetly that fetch evicting actions
 
     // Logically we can't jam shit in concurrently larger than the CAS..
-    int producerTotal = 2;
+    int producerTotal = 4;
     for (int i = 0; i < producerTotal; i++) {
         ExecutorService service1 = newSingleThreadExecutor();
         int producerId = i;
@@ -782,16 +783,16 @@ class CASFileCacheTest {
                       ByteString file = ByteString.copyFrom(fooData0);
                       Digest blobDigest = DIGEST_UTIL.compute(file);
 
-		      String blobKey = fileCache.getKey(blobDigest, /* isExecutable=*/ false);
+                      String blobKey = fileCache.getKey(blobDigest, /* isExecutable=*/ false);
                       blobs.put(blobDigest, file);
 
-                      if (!Files.exists(barPath)) {
+                     // if (!Files.exists(barPath)) {
                           fileCache.put(barDigest, false);
 
                           // Too big / complex for now
                           //buildFetchableDir(barDigest, "bar.ref", "bar.dir");
-                          System.out.println("Missing bar paths - had to add");
-                      }
+                          System.out.println("Missing bar paths - had to add barDigest:" + barDigest);
+                    //  }
 
 
                       System.out.println("Make blobDigest: " + blobDigest);
@@ -801,13 +802,19 @@ class CASFileCacheTest {
                       Path blobDirPath  = fileCache.getDirectoryPath(blobDirDigest);
 
                       Digest barDirDigest = buildFetchableDirDigest(barDigest, "bar.ref", "bar.dir");
+
+                      try {
+                          MILLISECONDS.sleep(10);
+                      } catch (InterruptedException intEx) {
+                          throw new IOException(intEx);
+                      }
                       Path barDirPath = fileCache.getDirectoryPath(barDirDigest);
 
                       //fooDirPath = fileCache.put(blobDigest, false);
 
                       if (!Files.exists(barPath)) {
                           System.out.println("Missing bar paths - fatal");
-                          return null;
+                          throw new RuntimeException("Missing bar paths - fatal");
                       }
 
 
@@ -826,7 +833,7 @@ class CASFileCacheTest {
                       if (!Files.exists(blobDirPath)) {
                           System.out.println("Missing paths");
                           producerCt.getAndIncrement();
-                          return null;
+                          throw new RuntimeException("Missing blobPath - fatal");
                       }
 
                       fileCache.decrementReferences(
@@ -842,8 +849,8 @@ class CASFileCacheTest {
                       //decrementReference(fooDirPath);
                   } catch (Exception e) {
                       e.printStackTrace(System.out);
-                      System.out.println("Exception.racer: " + e);
-                      producerCt.getAndIncrement();
+                      System.out.println("Exception.racer: don't go" + e);
+                      //producerCt.getAndIncrement();
                   }
 
 
@@ -872,7 +879,7 @@ class CASFileCacheTest {
       if (!(producerCt.get() < producerTotal)) {
           System.out.println("testWait.producerCt" + producerCt.get());
       }
-      if (i++ > 10000) {
+      if (i++ > 100) {
           break;
       }
       /*

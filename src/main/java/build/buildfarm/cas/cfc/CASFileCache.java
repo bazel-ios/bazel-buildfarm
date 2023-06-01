@@ -2642,6 +2642,21 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       createdTime = path.toFile().lastModified();
     }
 
+    // jmarino
+    // BEGIN RACE
+    // a race condition during expiration
+    /*
+          if (true) {
+            try {
+              MILLISECONDS.sleep(1000);
+	    } catch (InterruptedException intEx) {
+              throw new IOException(intEx);
+            }
+	  }
+    */
+    // BEGIN RACE
+
+
     Files.delete(path);
 
     if (publishTtlMetric) {
@@ -2901,6 +2916,19 @@ public abstract class CASFileCache implements ContentAddressableStorage {
           log.log(Level.INFO, "file already exists for " + key + ", nonexistent entry will fail");
         } finally {
           log.log(Level.INFO, "clean write path " + key + ":" + writePath);
+
+	  // Add a race condition where the other threads will time out
+	  // jmarino
+	  // BEGIN RACE
+	  /*
+          if (inserted) {
+            try {
+              MILLISECONDS.sleep(10);
+	    } catch (InterruptedException intEx) {
+              throw new IOException(intEx);
+            }
+	  }*/
+	  // END RACE
           Files.delete(writePath);
           if (!inserted) {
             dischargeAndNotify(blobSizeInBytes);
@@ -2909,6 +2937,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
 
         int attempts = 10;
         if (!inserted) {
+          log.log(Level.INFO, "XXXX not inserted insert will wait " + key);
           while (existingEntry == null && attempts-- != 0) {
             existingEntry = storage.get(key);
             try {
@@ -2918,6 +2947,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
             }
           }
 
+          log.log(Level.INFO, "XXXX did wait insert " + key + ": existingEntry" + existingEntry);
           if (existingEntry == null) {
             throw new IOException("existing entry did not appear for " + key);
           }
