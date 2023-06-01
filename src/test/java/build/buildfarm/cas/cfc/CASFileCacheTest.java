@@ -364,6 +364,9 @@ class CASFileCacheTest {
             dirDigest, directory,
             subdirDigest, subDirectory);
 
+    // Should this really do this..
+    fileCache.put(fileDigest, false);
+
     ExecutorService putService = newSingleThreadExecutor();
     Path dirPath =
         getInterruptiblyOrIOException(
