@@ -514,8 +514,11 @@ public abstract class CASFileCache implements ContentAddressableStorage {
   protected InputStream newTransparentInput(Compressor.Value compressor, Digest digest, long offset)
       throws IOException {
     try {
-      return newLocalInput(compressor, digest, offset);
+      InputStream in = newLocalInput(compressor, digest, offset);
+      System.out.println("NewLocalInput" + digest);
+      return in;
     } catch (NoSuchFileException e) {
+      System.out.println("NewLocalInput NoSuchFileException: pull" + digest);
       return CasFallbackDelegate.newInput(delegate, e, compressor, digest, offset);
     }
   }

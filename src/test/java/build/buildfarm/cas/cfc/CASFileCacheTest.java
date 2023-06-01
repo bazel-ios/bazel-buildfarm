@@ -701,11 +701,11 @@ class CASFileCacheTest {
     blobs.put(barDigest, barBlob);
     String barKey = fileCache.getKey(barDigest, false);
     Path barPath = fileCache.getPath(barKey);
-    when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(barDigest), eq(0L)))
-        .thenReturn(barBlob.newInput());
+    //when(delegate.newInput(eq(Compressor.Value.IDENTITY), eq(barDigest), eq(0L)))
+    //    .thenReturn(barBlob.newInput());
 
     // ADD BAR DATA
-    //fileCache.put(barDigest, false);
+    fileCache.put(barDigest, false);
 
 
     byte[] strawData = new byte[333]; // take us beyond our 1024 limit
@@ -765,8 +765,10 @@ class CASFileCacheTest {
                       //
                       // This might need to use the directory factory
                       byte[] fooData0;
+		      String blobName = null;
                       if (producerId % 2 == 0) {
                           System.out.println("FOO_A");
+			  blobName = "foo_a";
                           // For file only
                           //fooData0 = new byte[513];
                           fooData0 = new byte[352];
@@ -775,6 +777,7 @@ class CASFileCacheTest {
                           // For file only
                           // fooData0 = new byte[520];
                           fooData0 = new byte[359];
+			  blobName = "foo_b";
                       }
 
                       //byte[] fooData0 = new byte[499];
@@ -786,22 +789,22 @@ class CASFileCacheTest {
                       String blobKey = fileCache.getKey(blobDigest, /* isExecutable=*/ false);
                       blobs.put(blobDigest, file);
 
-                     // if (!Files.exists(barPath)) {
-                          fileCache.put(barDigest, false);
+		      /*
+                     if (!Files.exists(barPath)) {
+                          //fileCache.put(barDigest, false);
 
                           // Too big / complex for now
                           //buildFetchableDir(barDigest, "bar.ref", "bar.dir");
                           System.out.println("Missing bar paths - had to add barDigest:" + barDigest);
-                    //  }
+                    }*/
 
-
-                      System.out.println("Make blobDigest: " + blobDigest);
-                      //buildFetchableDir:161 bytes
-                      Digest blobDirDigest = buildFetchableDirDigest(blobDigest, "blob.ref", "blob.dir");
-
-                      Path blobDirPath  = fileCache.getDirectoryPath(blobDirDigest);
 
                       Digest barDirDigest = buildFetchableDirDigest(barDigest, "bar.ref", "bar.dir");
+                      System.out.println("Make blobDigest: " + blobDigest);
+                      //buildFetchableDir:161 bytes
+                      Digest blobDirDigest = buildFetchableDirDigest(blobDigest, blobName + "blob.ref", blobName + "dir");
+                      Path blobDirPath  = fileCache.getDirectoryPath(blobDirDigest);
+
 
                       try {
                           MILLISECONDS.sleep(10);
