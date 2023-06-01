@@ -463,7 +463,7 @@ class CASFileCacheTest {
     Digest barSubdirDigest = DIGEST_UTIL.compute(barDirectory);
 
     // Is this the root directory
-    Directory directory =
+    Directory barDirectoryXX =
         Directory.newBuilder()
             .addFiles(FileNode.newBuilder().setName("bar").setDigest(barDigest).build())
             .addFiles(FileNode.newBuilder().setName("straw").setDigest(strawDigest).build())
@@ -471,19 +471,28 @@ class CASFileCacheTest {
                 DirectoryNode.newBuilder().setName("barSubdir").setDigest(barSubdirDigest).build())
             .build();
 
-    Digest barDirDigest = DIGEST_UTIL.compute(directory);
-    Map<Digest, Directory> directoriesIndex =
+
+    Digest barDirDigestXX = DIGEST_UTIL.compute(barDirectoryXX);
+    // Is this the root directory
+    Directory rootDirectory =
+        Directory.newBuilder()
+            .addDirectories(
+                DirectoryNode.newBuilder().setName("barSubdir").setDigest(barDirDigestXX).build())
+            .build();
+
+    Digest rootDirDigest = DIGEST_UTIL.compute(rootDirectory);
+    Map<Digest, Directory> barDirectoriesIndex =
         ImmutableMap.of(
-            barDirDigest, directory,
+            rootDirDigest, rootDirectory,
+            barDirDigestXX, barDirectoryXX,
             barSubdirDigest, barDirectory);
     blobs.put(strawDigest, strawBlob);
-
-
 
     // would be /cache/execDir0
     Path execDir0 = root.resolve("execDir0");
 
-    ListenableFuture<Path> dirPathF = linkDirectory(execDir0, barDirDigest, directoriesIndex, putService);
+    ListenableFuture<Path> dirPathF = linkDirectory(execDir0, barDirDigestXX, barDirectoriesIndex, putService);
+
     try {
     Path dirPath = dirPathF.get();
     assertThat(Files.isDirectory(dirPath)).isTrue();
