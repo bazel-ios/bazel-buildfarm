@@ -100,6 +100,7 @@ public class RedisQueue extends QueueInterface {
    */
   public String dequeue(JedisCluster jedis, int timeout_s) throws InterruptedException {
     for (int i = 0; i < timeout_s; ++i) {
+        System.out.println("POP" + name);
       String val = jedis.brpoplpush(name, getDequeueName(), 1);
       if (val != null) {
         return val;

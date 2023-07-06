@@ -79,6 +79,7 @@ public class ProvisionedRedisQueue {
    * @brief The queue itself.
    * @details A balanced redis queue designed to hold particularly provisioned elements.
    */
+  // Jmarino - consider making this transient
   private final BalancedRedisQueue queue;
 
   /**
@@ -146,6 +147,8 @@ public class ProvisionedRedisQueue {
       List<String> hashtags,
       SetMultimap<String, String> filterProvisions,
       boolean allowUserUnmatched) {
+
+
     this.queue = new BalancedRedisQueue(name, hashtags, type);
     isFullyWildcard = filterProvisions.containsKey(WILDCARD_VALUE);
     provisions = filterProvisionsByWildcard(filterProvisions, isFullyWildcard);
@@ -164,9 +167,10 @@ public class ProvisionedRedisQueue {
     // check if a property is specifically requesting to match with the queue
     // any attempt to specifically match will not evaluate other properties
     Set<String> selected = properties.get(ExecutionProperties.CHOOSE_QUEUE);
+    /*
     if (!selected.isEmpty()) {
       return selected.contains(queue.getName());
-    }
+    }*/
 
     // fully wildcarded queues are always eligible
     if (isFullyWildcard) {
@@ -205,6 +209,8 @@ public class ProvisionedRedisQueue {
    * @note Suggested return identifier: queue.
    */
   public BalancedRedisQueue queue() {
+    // jmarino: What if we just slipped in the queue here
+    // new BalancedRedisQueue(name, hashtags, type);
     return queue;
   }
 

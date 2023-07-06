@@ -21,6 +21,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import redis.clients.jedis.JedisCluster;
+import build.buildfarm.common.grpc.TracingMetadataUtils;
+import build.bazel.remote.execution.v2.RequestMetadata;
 
 /**
  * @class BalancedRedisQueue
@@ -286,7 +288,10 @@ public class BalancedRedisQueue {
    * @note Suggested return identifier: name.
    */
   public String getName() {
-    return name;
+    RequestMetadata requestMetadata = TracingMetadataUtils.fromCurrentContext();
+    String invocationsId = requestMetadata.getCorrelatedInvocationsId();
+    String bName = invocationsId + name;
+    return bName;
   }
 
   /**

@@ -2176,6 +2176,7 @@ public class ShardInstance extends AbstractServerInstance {
         operationTransformService);
   }
 
+  // Note: jmarino - this is the entrypoint to queue
   private ListenableFuture<Void> transformAndQueue(
       ExecuteEntry executeEntry,
       Poller poller,
@@ -2335,7 +2336,7 @@ public class ShardInstance extends AbstractServerInstance {
               ensureCanQueue(stopwatch);
               long startQueueUSecs = stopwatch.elapsed(MICROSECONDS);
               poller.pause();
-              backplane.queue(queueEntry, queueOperation);
+              backplane.queue(queueEntry, queueOperation);//jmarino - key line
               long elapsedUSecs = stopwatch.elapsed(MICROSECONDS);
               long queueUSecs = elapsedUSecs - startQueueUSecs;
               log.log(

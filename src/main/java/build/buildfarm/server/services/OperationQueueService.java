@@ -121,6 +121,7 @@ public class OperationQueueService extends OperationQueueGrpc.OperationQueueImpl
     }
   }
 
+  // Note: jmarino - this is the entrypoint to cache an op
   @Override
   public void put(Operation operation, StreamObserver<com.google.rpc.Status> responseObserver) {
     try {

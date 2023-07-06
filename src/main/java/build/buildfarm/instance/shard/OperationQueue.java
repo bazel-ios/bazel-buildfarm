@@ -25,6 +25,8 @@ import com.google.common.collect.SetMultimap;
 import java.util.ArrayList;
 import java.util.List;
 import redis.clients.jedis.JedisCluster;
+import build.buildfarm.common.grpc.TracingMetadataUtils;
+import build.bazel.remote.execution.v2.RequestMetadata;
 
 /**
  * @class OperationQueue
@@ -144,8 +146,8 @@ public class OperationQueue {
    * @note Overloaded.
    * @note Suggested return identifier: name.
    */
-  public String getDequeueName(List<Platform.Property> provisions) {
-    BalancedRedisQueue queue = chooseEligibleQueue(provisions);
+  public String getDequeueName(List<Platform.Property> provisions, String rqm) {
+    BalancedRedisQueue queue = chooseEligibleQueue(provisions, rqm);
     return queue.getDequeueName();
   }
 
@@ -156,8 +158,8 @@ public class OperationQueue {
    * @return The name of the queue.
    * @note Suggested return identifier: name.
    */
-  public String getName(List<Platform.Property> provisions) {
-    BalancedRedisQueue queue = chooseEligibleQueue(provisions);
+  public String getName(List<Platform.Property> provisions, String rqm) {
+    BalancedRedisQueue queue = chooseEligibleQueue(provisions, rqm);
     return queue.getName();
   }
 
@@ -169,8 +171,8 @@ public class OperationQueue {
    * @param val The value to push onto the queue.
    */
   public void push(
-      JedisCluster jedis, List<Platform.Property> provisions, String val, int priority) {
-    BalancedRedisQueue queue = chooseEligibleQueue(provisions);
+      JedisCluster jedis, List<Platform.Property> provisions, String val, int priority, String rqm) {
+    BalancedRedisQueue queue = chooseEligibleQueue(provisions, rqm);
     queue.push(jedis, val, (double) priority);
   }
 
@@ -186,7 +188,9 @@ public class OperationQueue {
    */
   public String dequeue(JedisCluster jedis, List<Platform.Property> provisions)
       throws InterruptedException {
-    BalancedRedisQueue queue = chooseEligibleQueue(provisions);
+      String rqm = "XX";
+    System.out.println("WillDequeue");
+    BalancedRedisQueue queue = chooseEligibleQueue(provisions, rqm);
     return queue.dequeue(jedis);
   }
 
@@ -221,8 +225,8 @@ public class OperationQueue {
    * @note Overloaded.
    * @note Suggested return identifier: status.
    */
-  public QueueStatus status(JedisCluster jedis, List<Platform.Property> provisions) {
-    BalancedRedisQueue queue = chooseEligibleQueue(provisions);
+  public QueueStatus status(JedisCluster jedis, List<Platform.Property> provisions, String rqm) {
+    BalancedRedisQueue queue = chooseEligibleQueue(provisions, rqm);
     return queue.status(jedis);
   }
 
@@ -263,12 +267,19 @@ public class OperationQueue {
    * @return The chosen queue.
    * @note Suggested return identifier: queue.
    */
-  private BalancedRedisQueue chooseEligibleQueue(List<Platform.Property> provisions) {
+  private BalancedRedisQueue chooseEligibleQueue(List<Platform.Property> provisions, String rqm) {
+    RequestMetadata requestMetadata = TracingMetadataUtils.fromCurrentContext();
+    String invocationsId = requestMetadata.getCorrelatedInvocationsId();
+    String bName = invocationsId + "TBD this name";
+    System.out.println("BName" + bName);
+
     for (ProvisionedRedisQueue provisionedQueue : queues) {
       if (provisionedQueue.isEligible(toMultimap(provisions))) {
         return provisionedQueue.queue();
       }
     }
+    // Maybe we should just create a new queue here -
+
 
     // At this point, we were unable to match an action to an eligible queue.
     // We will build an error explaining why the matching failed. This will help user's properly

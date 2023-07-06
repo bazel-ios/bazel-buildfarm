@@ -924,16 +924,18 @@ public class RedisShardBackplane implements Backplane {
     return true;
   }
 
+  // jmarino queue path
   private void queue(
       JedisCluster jedis,
       String operationName,
       List<Platform.Property> provisions,
       String queueEntryJson,
       int priority) {
+    String rqm = "XXX";
     if (state.dispatchedOperations.remove(jedis, operationName)) {
       log.log(Level.WARNING, format("removed dispatched operation %s", operationName));
     }
-    state.operationQueue.push(jedis, provisions, queueEntryJson, priority);
+    state.operationQueue.push(jedis, provisions, queueEntryJson, priority, rqm);
   }
 
   @SuppressWarnings("ConstantConditions")
@@ -942,6 +944,7 @@ public class RedisShardBackplane implements Backplane {
     String operationName = operation.getName();
     String operationJson = operationPrinter.print(operation);
     String queueEntryJson = JsonFormat.printer().print(queueEntry);
+    // jmarino - what if at this point we inject a prefix or something?
     Operation publishOperation = onPublish.apply(operation);
     int priority = queueEntry.getExecuteEntry().getExecutionPolicy().getPriority();
     client.run(
@@ -1119,6 +1122,7 @@ public class RedisShardBackplane implements Backplane {
     String operationName = queueEntry.getExecuteEntry().getOperationName();
     String queueEntryJson = JsonFormat.printer().print(queueEntry);
     String dispatchedEntryJson = printPollOperation(queueEntry, 0);
+    String rqm = "XXX";
     client.run(
         jedis -> {
           if (isBlacklisted(jedis, queueEntry.getExecuteEntry().getRequestMetadata())) {
@@ -1131,7 +1135,7 @@ public class RedisShardBackplane implements Backplane {
             if (state.dispatchedOperations.remove(jedis, operationName) && requeue) {
               int priority = queueEntry.getExecuteEntry().getExecutionPolicy().getPriority();
               state.operationQueue.push(
-                  jedis, queueEntry.getPlatform().getPropertiesList(), queueEntryJson, priority);
+                  jedis, queueEntry.getPlatform().getPropertiesList(), queueEntryJson, priority, rqm);
             }
           }
         });

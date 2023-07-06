@@ -5,6 +5,7 @@ java_library(
     visibility = ["//visibility:public"],
     deps = [
         "//src/main/java/build/buildfarm/common",
+        "//src/main/java/build/buildfarm/common/grpc",
         "//src/main/java/build/buildfarm/common/config",
         "//src/main/protobuf:build_buildfarm_v1test_buildfarm_java_proto",
         "//third_party/jedis",
