@@ -945,6 +945,14 @@ public class RedisShardBackplane implements Backplane {
     String operationJson = operationPrinter.print(operation);
     String queueEntryJson = JsonFormat.printer().print(queueEntry);
     // jmarino - what if at this point we inject a prefix or something?
+    // jmarino
+    // Probably by injecting a correlated GUID provision here - we could either:
+    // 1. introspect the GUID `provisions` in an OperationQueue and select a
+    //    dyamically generated queue
+    // 2. Simply configure it to match the GUID provision:
+    //   - a VM test worker is allocated/registered with:
+    //        - GUID platform property
+    //        - Specialized OS
     Operation publishOperation = onPublish.apply(operation);
     int priority = queueEntry.getExecuteEntry().getExecutionPolicy().getPriority();
     client.run(
