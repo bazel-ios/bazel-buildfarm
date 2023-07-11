@@ -13,6 +13,13 @@
 // limitations under the License.
 
 package build.buildfarm.instance.shard;
+import static java.util.AbstractMap.SimpleImmutableEntry;
+import java.net.URL;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedList;
+import java.util.LinkedHashMap;
+import java.io.UnsupportedEncodingException;
 
 import static build.buildfarm.cas.ContentAddressableStorage.NOT_FOUND;
 import static build.buildfarm.cas.ContentAddressableStorage.OK;
@@ -2175,7 +2182,42 @@ public class ShardInstance extends AbstractServerInstance {
         },
         operationTransformService);
   }
+public static Map<String, List<String>> splitQuery2(URL url) throws UnsupportedEncodingException{
+  final Map<String, List<String>> query_pairs = new LinkedHashMap<String, List<String>>();
+  // Maybe we can just make this a bit more robust
+  final String[] pairs = url.getQuery().split("&");
+  for (String pair : pairs) {
+    final int idx = pair.indexOf("=");
+    final String key = idx > 0 ? URLDecoder.decode(pair.substring(0, idx), "UTF-8") : pair;
+    if (!query_pairs.containsKey(key)) {
+      query_pairs.put(key, new LinkedList<String>());
+    }
+    final String value = idx > 0 && pair.length() > idx + 1 ? URLDecoder.decode(pair.substring(idx + 1), "UTF-8") : null;
+    query_pairs.get(key).add(value);
+  }
+  return query_pairs;
+}
 
+/*
+public Map<String, List<String>> splitQuery(URL url) {
+    if (Strings.isNullOrEmpty(url.getQuery())) {
+        return Collections.emptyMap();
+    }
+    return Arrays.stream(url.getQuery().split("&"))
+            .map(this::splitQueryParameter)
+            .collect(Collectors.groupingBy(SimpleImmutableEntry::getKey, LinkedHashMap::new, mapping(Map.Entry::getValue, Collectors.toList())));
+}
+
+public SimpleImmutableEntry<String, String> splitQueryParameter(String it) {
+    final int idx = it.indexOf("=");
+    final String key = idx > 0 ? it.substring(0, idx) : it;
+    final String value = idx > 0 && it.length() > idx + 1 ? it.substring(idx + 1) : null;
+    return new SimpleImmutableEntry<>(
+        URLDecoder.decode(key, StandardCharsets.UTF_8),
+        URLDecoder.decode(value, StandardCharsets.UTF_8)
+    );
+}
+*/
   // Note: jmarino - this is the entrypoint to queue
   private ListenableFuture<Void> transformAndQueue(
       ExecuteEntry executeEntry,
@@ -2323,14 +2365,39 @@ public class ShardInstance extends AbstractServerInstance {
           public void onSuccess(ProfiledQueuedOperationMetadata profiledQueuedMetadata) {
             QueuedOperationMetadata queuedOperationMetadata =
                 profiledQueuedMetadata.getQueuedOperationMetadata();
+             RequestMetadata requestMetdata = queuedOperationMetadata.getRequestMetadata();
+
+	    String invocationsId = requestMetadata.getCorrelatedInvocationsId();
+
+
+	    Map<String, List<String>> parts = null;
+	    try {
+		parts = splitQuery2(new URL(invocationsId));
+	    } catch (Exception e) {
+	    }
+	    // We can have some code to map the exec-group
+            System.out.println("X CorrelatedInvocationsId: " + invocationsId);
+            System.out.println("X CorrelatedInvocationsId: " + parts.get("exec_group"));
+
             Operation queueOperation =
                 operation.toBuilder().setMetadata(Any.pack(queuedOperationMetadata)).build();
+            Platform basePlatform = profiledQueuedMetadata.getQueuedOperation().getCommand().getPlatform();
+            // This is where the queue entry is created
+            Platform.Builder matchPlatformBuilder = Platform.newBuilder()
+                    .addProperties(
+                Property.newBuilder().setName("whisky").setValue("foo").build());
+
+            for (Platform.Property p : basePlatform.getPropertiesList()) {
+                matchPlatformBuilder.addProperties(p);
+            }
+            Platform matchPlatform = matchPlatformBuilder.build();
+
+	    matchPlatform = basePlatform;
             QueueEntry queueEntry =
                 QueueEntry.newBuilder()
                     .setExecuteEntry(executeEntry)
                     .setQueuedOperationDigest(queuedOperationMetadata.getQueuedOperationDigest())
-                    .setPlatform(
-                        profiledQueuedMetadata.getQueuedOperation().getCommand().getPlatform())
+                    .setPlatform(matchPlatform)
                     .build();
             try {
               ensureCanQueue(stopwatch);
