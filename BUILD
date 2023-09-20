@@ -43,8 +43,9 @@ java_library(
         ":linux-sandbox.binary",
         ":macos-wrapper",
         ":process-wrapper.binary",
-        ":skip_sleep.binary",
-        ":skip_sleep.preload",
+        # TODO: Fixes skip_sleep on linux
+        # ":skip_sleep.binary",
+        # ":skip_sleep.preload",
         ":tini.binary",
     ],
 )
