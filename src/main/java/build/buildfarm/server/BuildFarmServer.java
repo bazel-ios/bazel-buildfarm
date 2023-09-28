@@ -31,7 +31,6 @@ import build.buildfarm.instance.shard.ShardInstance;
 import build.buildfarm.metrics.prometheus.PrometheusPublisher;
 import build.buildfarm.server.controllers.WebController;
 import build.buildfarm.server.services.ActionCacheService;
-import build.buildfarm.server.services.AdminService;
 import build.buildfarm.server.services.CapabilitiesService;
 import build.buildfarm.server.services.ExecutionService;
 import build.buildfarm.server.services.FetchService;
@@ -123,7 +122,6 @@ public class BuildFarmServer {
         .addService(new ExecutionService(instance, keepaliveScheduler))
         .addService(new OperationQueueService(instance))
         .addService(new OperationsService(instance))
-        .addService(new AdminService(instance))
         .addService(new FetchService(instance))
         .addService(ProtoReflectionService.newInstance())
         .addService(new PublishBuildEventService())
