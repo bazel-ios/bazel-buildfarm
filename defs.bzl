@@ -44,12 +44,7 @@ IO_GRPC_MODULES = [
 ]
 
 COM_AWS_MODULES = [
-    "autoscaling",
-    "core",
-    "ec2",
     "secretsmanager",
-    "sns",
-    "ssm",
     "s3",
 ]
 
