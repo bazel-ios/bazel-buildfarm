@@ -36,6 +36,7 @@ import build.buildfarm.cas.cfc.CASFileCache;
 import build.buildfarm.common.BuildfarmExecutors;
 import build.buildfarm.common.DigestUtil;
 import build.buildfarm.common.InputStreamFactory;
+import build.buildfarm.common.LoggingMain;
 import build.buildfarm.common.config.BuildfarmConfigs;
 import build.buildfarm.common.config.Cas;
 import build.buildfarm.common.config.GrpcMetrics;
@@ -61,7 +62,6 @@ import build.buildfarm.worker.ReportResultStage;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.SettableFuture;
-import com.google.devtools.common.options.OptionsParsingException;
 import com.google.longrunning.Operation;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Duration;
@@ -88,22 +88,14 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import javax.annotation.Nullable;
-import javax.annotation.PostConstruct;
-import javax.annotation.PreDestroy;
 import javax.naming.ConfigurationException;
 import lombok.extern.java.Log;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.ApplicationContext;
-import org.springframework.context.annotation.ComponentScan;
 
 @Log
-@SpringBootApplication
-@ComponentScan("build.buildfarm")
-public class Worker {
+public final class Worker extends LoggingMain {
   private static final java.util.logging.Logger nettyLogger =
       java.util.logging.Logger.getLogger("io.grpc.netty");
   private static final Counter healthCheckMetric =
@@ -144,54 +136,10 @@ public class Worker {
   private Pipeline pipeline;
   private Backplane backplane;
   private LoadingCache<String, Instance> workerStubs;
+  private AtomicBoolean released = new AtomicBoolean(true);
 
-  @Autowired private ApplicationContext springContext;
-  /**
-   * The method will prepare the worker for graceful shutdown when the worker is ready. Note on
-   * using stderr here instead of log. By the time this is called in PreDestroy, the log is no
-   * longer available and is not logging messages.
-   */
-  public void prepareWorkerForGracefulShutdown() {
-    if (configs.getWorker().getGracefulShutdownSeconds() == 0) {
-      System.err.println(
-          String.format(
-              "Graceful Shutdown is not enabled. Worker is shutting down without finishing executions in progress."));
-    } else {
-      inGracefulShutdown = true;
-      System.err.println(
-          "Graceful Shutdown - The current worker will not be registered again and should be shutdown gracefully!");
-      pipeline.stopMatchingOperations();
-      int scanRate = 30; // check every 30 seconds
-      int timeWaited = 0;
-      int timeOut = configs.getWorker().getGracefulShutdownSeconds();
-
-      try {
-        if (pipeline.isEmpty()) {
-          System.err.println("Graceful Shutdown - no work in the pipeline.");
-        } else {
-          System.err.println(
-              String.format("Graceful Shutdown - waiting for executions to finish."));
-        }
-        while (!pipeline.isEmpty() && timeWaited < timeOut) {
-          SECONDS.sleep(scanRate);
-          timeWaited += scanRate;
-          System.err.println(
-              String.format(
-                  "Graceful Shutdown - Pipeline is still not empty after %d seconds.", timeWaited));
-        }
-      } catch (InterruptedException e) {
-        System.err.println(
-            "Graceful Shutdown - The worker gracefully shutdown is interrupted: " + e.getMessage());
-      } finally {
-        System.err.println(
-            String.format(
-                "Graceful Shutdown - It took the worker %d seconds to %s",
-                timeWaited,
-                pipeline.isEmpty()
-                    ? "finish all actions"
-                    : "gracefully shutdown but still cannot finish all actions"));
-      }
-    }
+  private Worker() {
+    super("BuildFarmShardWorker");
   }
 
   private void exitPostPipelineFailure() {
@@ -225,10 +173,9 @@ public class Worker {
 
     // Consider defining exit codes to better afford out of band instance
     // recovery
-    int code = SpringApplication.exit(springContext, () -> 1);
     termFuture.cancel(false);
     shutdownDeadlineExecutor.shutdown();
-    System.exit(code);
+    System.exit(1);
   }
 
   private Operation stripOperation(Operation operation) {
@@ -546,13 +493,6 @@ public class Worker {
                   }
                 } catch (InterruptedException e) {
                   // ignore
-                } finally {
-                  try {
-                    stop();
-                  } catch (InterruptedException ie) {
-                    log.log(SEVERE, "interrupted while stopping worker", ie);
-                    // ignore
-                  }
                 }
               }
             },
@@ -572,6 +512,7 @@ public class Worker {
   }
 
   public void start() throws ConfigurationException, InterruptedException, IOException {
+    released.set(false);
     String session = UUID.randomUUID().toString();
     ServerBuilder<?> serverBuilder = ServerBuilder.forPort(configs.getWorker().getPort());
     String identifier = "buildfarm-worker-" + configs.getWorker().getPublicName() + "-" + session;
@@ -681,10 +622,41 @@ public class Worker {
     log.log(INFO, String.format("%s initialized", identifier));
   }
 
-  @PreDestroy
-  public void stop() throws InterruptedException {
-    System.err.println("*** shutting down gRPC server since JVM is shutting down");
-    prepareWorkerForGracefulShutdown();
+  @Override
+  protected void onShutdown() throws InterruptedException {
+    initiateShutdown();
+    awaitRelease();
+  }
+
+  private void awaitTermination() throws InterruptedException {
+    pipeline.join();
+    server.awaitTermination();
+  }
+
+  public void initiateShutdown() {
+    pipeline.stopMatchingOperations();
+    if (server != null) {
+      server.shutdown();
+    }
+  }
+
+  private synchronized void awaitRelease() throws InterruptedException {
+    while (!released.get()) {
+      wait();
+    }
+  }
+
+  public synchronized void stop() throws InterruptedException {
+    try {
+      shutdown();
+    } finally {
+      released.set(true);
+      notify();
+    }
+  }
+
+  private void shutdown() throws InterruptedException {
+    log.info("*** shutting down gRPC server since JVM is shutting down");
     PrometheusPublisher.stopHttpServer();
     boolean interrupted = Thread.interrupted();
     if (pipeline != null) {
@@ -702,11 +674,12 @@ public class Worker {
     executionSlotsTotal.set(0);
     inputFetchSlotsTotal.set(0);
     if (execFileSystem != null) {
-      log.log(INFO, "Stopping exec filesystem");
+      log.info("Stopping exec filesystem");
       execFileSystem.stop();
+      execFileSystem = null;
     }
     if (server != null) {
-      log.log(INFO, "Shutting down the server");
+      log.info("Shutting down the server");
       server.shutdown();
 
       try {
@@ -717,26 +690,28 @@ public class Worker {
       } finally {
         server.shutdownNow();
       }
+      server = null;
     }
     if (backplane != null) {
       try {
         backplane.stop();
+        backplane = null;
       } catch (InterruptedException e) {
         interrupted = true;
       }
     }
     if (workerStubs != null) {
       workerStubs.invalidateAll();
+      workerStubs = null;
     }
     if (interrupted) {
       Thread.currentThread().interrupt();
       throw new InterruptedException();
     }
-    System.err.println("*** server shut down");
+    log.info("*** server shut down");
   }
 
-  @PostConstruct
-  public void init() throws OptionsParsingException {
+  public static void main(String[] args) throws Exception {
     // Only log severe log messages from Netty. Otherwise it logs warnings that look like this:
     //
     // 170714 08:16:28.552:WT 18 [io.grpc.netty.NettyServerHandler.onStreamError] Stream Error
@@ -744,19 +719,17 @@ public class Worker {
     // unknown stream 11369
     nettyLogger.setLevel(SEVERE);
 
-    try {
-      start();
-    } catch (IOException e) {
-      System.err.println("error: " + formatIOError(e));
-    } catch (InterruptedException e) {
-      System.out.println("error: interrupted");
-    } catch (ConfigurationException e) {
-      throw new RuntimeException(e);
-    }
-  }
-
-  public static void main(String[] args) throws ConfigurationException {
     configs = BuildfarmConfigs.loadWorkerConfigs(args);
-    SpringApplication.run(Worker.class, args);
+    Worker worker = new Worker();
+    try {
+      worker.start();
+      worker.awaitTermination();
+    } catch (IOException e) {
+      log.severe(formatIOError(e));
+    } catch (InterruptedException e) {
+      log.log(Level.WARNING, "interrupted", e);
+    } finally {
+      worker.stop();
+    }
   }
 }
