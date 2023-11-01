@@ -20,9 +20,9 @@ import static build.buildfarm.common.UrlPath.parseUploadBlobDigest;
 import static build.buildfarm.common.UrlPath.parseUploadBlobUUID;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
-import static io.grpc.Status.Code.ALREADY_EXISTS;
 import static io.grpc.Status.ABORTED;
 import static io.grpc.Status.CANCELLED;
+import static io.grpc.Status.Code.ALREADY_EXISTS;
 import static io.grpc.Status.INVALID_ARGUMENT;
 import static java.lang.String.format;
 
@@ -32,11 +32,12 @@ import build.bazel.remote.execution.v2.RequestMetadata;
 import build.buildfarm.cas.DigestMismatchException;
 import build.buildfarm.common.EntryLimitException;
 import build.buildfarm.common.UrlPath.InvalidResourceNameException;
-import build.buildfarm.common.Write.WriteCompleteException;
 import build.buildfarm.common.Write;
+import build.buildfarm.common.Write.WriteCompleteException;
 import build.buildfarm.common.grpc.TracingMetadataUtils;
 import build.buildfarm.common.io.FeedbackOutputStream;
 import build.buildfarm.instance.Instance;
+import com.github.luben.zstd.ZstdIOException;
 import com.google.bytestream.ByteStreamProto.WriteRequest;
 import com.google.bytestream.ByteStreamProto.WriteResponse;
 import com.google.common.util.concurrent.FutureCallback;
@@ -371,7 +372,21 @@ public class WriteStreamObserver implements StreamObserver<WriteRequest> {
             format(
                 "writing %d to %s at %d%s",
                 bytesToWrite, name, offset, finishWrite ? " with finish_write" : ""));
-        writeData(data);
+        try {
+          writeData(data);
+        } catch (ZstdIOException e) {
+          // Zstd has some quirks - fail faster for these
+          out = null;
+          write.reset();
+          committedSize = 0;
+          wasReady.set(false);
+          errorResponse(
+              ABORTED
+                  .withDescription(format("Encountered error at offset %d", offset))
+                  .asException());
+          return;
+        }
+
         requestCount++;
         requestBytes += data.size();
       }
@@ -397,7 +412,7 @@ public class WriteStreamObserver implements StreamObserver<WriteRequest> {
   }
 
   @GuardedBy("this")
-  private void writeData(ByteString data) throws EntryLimitException {
+  private void writeData(ByteString data) throws EntryLimitException, ZstdIOException {
     try {
       data.writeTo(getOutput());
       requestNextIfReady();
@@ -405,8 +420,7 @@ public class WriteStreamObserver implements StreamObserver<WriteRequest> {
     } catch (EntryLimitException e) {
       throw e;
     } catch (WriteCompleteException e) {
-      Status status = Status.fromCode(ALREADY_EXISTS)
-          .withCause(e);
+      Status status = Status.fromCode(ALREADY_EXISTS).withCause(e);
       log.log(Level.FINE, format("already wrote data for %s", name), e);
       errorResponse(status.asException());
     } catch (IOException e) {

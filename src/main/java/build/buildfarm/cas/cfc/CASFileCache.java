@@ -854,6 +854,9 @@ public abstract class CASFileCache implements ContentAddressableStorage {
             try {
               if (out != null) {
                 out.cancel();
+                if (false == isComplete()) {
+                  fileCommittedSize = 0;
+                }
               }
             } catch (IOException e) {
               log.log(
@@ -865,6 +868,10 @@ public abstract class CASFileCache implements ContentAddressableStorage {
                   e);
             } finally {
               isReset = true;
+              out = null;
+              if (closedFuture != null) {
+                closedFuture.set(null);
+              }
             }
           }
 
