@@ -419,6 +419,8 @@ public class WriteStreamObserver implements StreamObserver<WriteRequest> {
       ioMetric.observe(data.size());
     } catch (EntryLimitException e) {
       throw e;
+    } catch (ZstdIOException e) {
+      throw e;
     } catch (WriteCompleteException e) {
       Status status = Status.fromCode(ALREADY_EXISTS).withCause(e);
       log.log(Level.FINE, format("already wrote data for %s", name), e);
