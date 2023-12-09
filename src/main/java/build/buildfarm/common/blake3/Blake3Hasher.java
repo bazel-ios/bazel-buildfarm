@@ -65,17 +65,17 @@ public final class Blake3Hasher implements Hasher {
   }
 
   @Override
-  public final Hasher putBoolean(boolean b) {
+  public Hasher putBoolean(boolean b) {
     return putByte(b ? (byte) 1 : (byte) 0);
   }
 
   @Override
-  public final Hasher putDouble(double d) {
+  public Hasher putDouble(double d) {
     return putLong(Double.doubleToRawLongBits(d));
   }
 
   @Override
-  public final Hasher putFloat(float f) {
+  public Hasher putFloat(float f) {
     return putInt(Float.floatToRawIntBits(f));
   }
 

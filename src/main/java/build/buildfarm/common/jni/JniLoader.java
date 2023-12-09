@@ -17,7 +17,7 @@ package build.buildfarm.common.jni;
 import static com.google.common.base.Preconditions.checkArgument;
 
 import com.google.common.io.ByteStreams;
-import com.google.devtools.build.lib.util.OS;
+import build.buildfarm.common.os.OS;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,6 +26,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /** Generic code to interact with the platform-specific JNI code bundle. */
+@SuppressWarnings("PMD.AvoidUsingNativeCode")
 public final class JniLoader {
 
   private static final boolean JNI_AVAILABLE;
@@ -109,7 +110,6 @@ public final class JniLoader {
         Files.delete(tempFile);
         tempFile = null;
         Files.delete(dir);
-        dir = null;
       }
     } catch (IOException e) {
       try {
@@ -126,7 +126,9 @@ public final class JniLoader {
     }
   }
 
-  protected JniLoader() {}
+  protected JniLoader() {
+    /* Don't construct me outside my package. */
+  }
 
   /**
    * Triggers the load of the JNI bundle in a platform-independent basis.

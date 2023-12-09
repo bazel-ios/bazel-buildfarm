@@ -14,7 +14,6 @@
 package build.buildfarm.common.blake3;
 
 import build.buildfarm.common.jni.JniLoader;
-import java.nio.ByteBuffer;
 import java.security.DigestException;
 import java.security.MessageDigest;
 
@@ -53,11 +52,6 @@ public final class Blake3MessageDigest extends MessageDigest {
   public void engineUpdate(byte b) {
     oneByteArray[0] = b;
     engineUpdate(oneByteArray, 0, 1);
-  }
-
-  @Override
-  public void engineUpdate(ByteBuffer input) {
-    super.engineUpdate(input);
   }
 
   private byte[] getOutput(int outputLength) {
@@ -102,12 +96,12 @@ public final class Blake3MessageDigest extends MessageDigest {
     return digestBytes.length;
   }
 
-  public static final native int hasher_size();
+  public static native int hasher_size();
 
-  public static final native void initialize_hasher(byte[] hasher);
+  public static native void initialize_hasher(byte[] hasher);
 
-  public static final native void blake3_hasher_update(
+  public static native void blake3_hasher_update(
       byte[] hasher, byte[] input, int offset, int inputLen);
 
-  public static final native void blake3_hasher_finalize(byte[] hasher, byte[] out, int outLen);
+  public static native void blake3_hasher_finalize(byte[] hasher, byte[] out, int outLen);
 }
