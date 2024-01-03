@@ -87,6 +87,7 @@ public class RemoteCasWriter implements CasWriter {
     String workerName = getRandomWorker();
     Write write = getCasMemberWrite(digest, digestFunction, workerName);
 
+    write.reset();
     try {
       return streamIntoWriteFuture(in, write, digest).get();
     } catch (ExecutionException e) {
