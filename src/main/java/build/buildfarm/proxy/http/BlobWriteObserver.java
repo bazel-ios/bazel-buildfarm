@@ -162,7 +162,7 @@ class BlobWriteObserver implements WriteObserver {
   }
 
   @Override
-  public boolean getComplete() {
+  public boolean isComplete() {
     return complete;
   }
 }

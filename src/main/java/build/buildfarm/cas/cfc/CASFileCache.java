@@ -1258,7 +1258,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       return size;
     }
 
-    boolean getIsExecutable() {
+    boolean isExecutable() {
       return isExecutable;
     }
 
@@ -1497,7 +1497,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
         FileEntryKey fileEntryKey = parseFileEntryKey(basename, stat.getSize());
 
         // if key entry file name cannot be parsed, mark file for later deletion.
-        if (fileEntryKey == null || stat.isReadOnlyExecutable() != fileEntryKey.getIsExecutable()) {
+        if (fileEntryKey == null || stat.isReadOnlyExecutable() != fileEntryKey.isExecutable()) {
           synchronized (deleteFiles) {
             deleteFiles.add(file);
           }
@@ -2952,7 +2952,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
                       if (fileEntryKey == null) {
                         log.log(Level.SEVERE, format("error parsing expired key %s", expiredKey));
                       } else if (storage.containsKey(
-                          getKey(fileEntryKey.getDigest(), !fileEntryKey.getIsExecutable()))) {
+                          getKey(fileEntryKey.getDigest(), !fileEntryKey.isExecutable()))) {
                         return immediateFuture(null);
                       }
                       expiredKeyCounter.inc();
