@@ -13,6 +13,7 @@ java_test(
         "//third_party/jedis",
         "@googleapis//:google_bytestream_bytestream_java_proto",
         "@googleapis//:google_rpc_error_details_java_proto",
+        "@maven//:com_github_luben_zstd_jni",
         "@maven//:com_google_guava_guava",
         "@maven//:com_google_jimfs_jimfs",
         "@maven//:com_google_protobuf_protobuf_java",
