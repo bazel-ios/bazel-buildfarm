@@ -83,7 +83,7 @@ public class RedisClient implements Closeable {
   // We store the factory in case we want to re-create the jedis client.
   private Supplier<UnifiedJedis> unifiedJedisFactory;
 
-  private final UnifiedJedis jedis;
+  private UnifiedJedis jedis;
 
   private boolean closed = false;
 

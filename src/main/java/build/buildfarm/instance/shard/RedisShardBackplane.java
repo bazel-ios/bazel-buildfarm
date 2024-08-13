@@ -538,18 +538,12 @@ public class RedisShardBackplane implements Backplane {
     // Construct a single redis client to be used throughout the entire backplane.
     // We wish to avoid various synchronous and error handling issues that could occur when using
     // multiple clients.
-    client =
-        new RedisClient(
-            jedisClusterFactory,
-            configs.getBackplane().getReconnectClientAttempts(),
-            configs.getBackplane().getReconnectClientWaitDurationMs());
-  // Create containers that make up the backplane
     start(new RedisClient(jedisClusterFactory.get()), clientPublicName);
-}
+  }
 
   private void start(RedisClient client, String clientPublicName) throws IOException {
-      // Create containers that make up the backplane
-      start(client, DistributedStateCreator.create(client), clientPublicName);
+    // Create containers that make up the backplane
+    start(client, DistributedStateCreator.create(client), clientPublicName);
   }
 
   @VisibleForTesting

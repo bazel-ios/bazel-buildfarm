@@ -3209,6 +3209,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
         Entry existingEntry = null;
         boolean inserted = false;
         try {
+          // acquire the key lock
           log.log(Level.FINEST, "comitting " + key + " from " + writePath);
           Path cachePath = CASFileCache.this.getPath(key);
           CASFileCache.this.renamePath(writePath, cachePath);
