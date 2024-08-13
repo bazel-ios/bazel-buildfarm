@@ -72,12 +72,17 @@ public class SuperscalarPipelineStageTest {
     boolean isFull() {
       return claims.size() == width;
     }
+
+    @Override
+    public int getSlotUsage() {
+      return 0;
+    }
   }
 
   @Test
   public void interruptedClaimReleasesPartial() throws InterruptedException {
     AbstractSuperscalarPipelineStage stage =
-        new AbstractSuperscalarPipelineStage("too-narrow", /* output=*/ null, /* width=*/ 3) {
+        new AbstractSuperscalarPipelineStage("too-narrow", /* output= */ null, /* width= */ 3) {
           @Override
           protected int claimsRequired(OperationContext operationContext) {
             return 5;
@@ -102,7 +107,7 @@ public class SuperscalarPipelineStageTest {
     // start a thread, when the stage is exhausted, interrupt this one
 
     try {
-      stage.claim(/* operationContext=*/ null);
+      stage.claim(/* operationContext= */ null);
       fail("should not get here");
     } catch (InterruptedException e) {
       // ignore
@@ -121,7 +126,7 @@ public class SuperscalarPipelineStageTest {
     BlockingQueue<OperationContext> queue = new ArrayBlockingQueue<>(1);
     PipelineStage output = new PipelineStageTest.StubPipelineStage("unclosed-sink");
     PipelineStage stage =
-        new AbstractSuperscalarPipelineStage("queue-claimed", output, /* width=*/ 3) {
+        new AbstractSuperscalarPipelineStage("queue-claimed", output, /* width= */ 3) {
           @Override
           protected int claimsRequired(OperationContext operationContext) {
             return 2;

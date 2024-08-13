@@ -7,11 +7,12 @@ java_library(
         "//src/main/java/build/buildfarm/common",
         "//src/main/java/build/buildfarm/common/config",
         "//src/main/protobuf:build_buildfarm_v1test_buildfarm_java_proto",
-        "//third_party/jedis",
+        "@maven//:com_google_code_findbugs_jsr305",
         "@maven//:com_google_guava_guava",
         "@maven//:io_grpc_grpc_api",
         "@maven//:io_prometheus_simpleclient",
         "@maven//:org_projectlombok_lombok",
         "@maven//:org_redisson_redisson",
+        "@maven//:redis_clients_jedis",
     ],
 )

@@ -22,7 +22,6 @@ import build.bazel.remote.execution.v2.ExecuteResponse;
 import build.bazel.remote.execution.v2.RequestMetadata;
 import build.buildfarm.common.config.BuildfarmConfigs;
 import build.buildfarm.common.config.Metrics;
-import build.buildfarm.metrics.aws.AwsMetricsPublisher;
 import build.buildfarm.metrics.log.LogMetricsPublisher;
 import build.buildfarm.v1test.OperationRequestMetadata;
 import com.google.longrunning.Operation;
@@ -42,14 +41,12 @@ public class MetricsPublisherTest {
   private final ExecuteOperationMetadata defaultExecuteOperationMetadata =
       ExecuteOperationMetadata.getDefaultInstance();
   private final RequestMetadata defaultRequestMetadata =
-      RequestMetadata.getDefaultInstance()
-          .toBuilder()
+      RequestMetadata.getDefaultInstance().toBuilder()
           .setCorrelatedInvocationsId(
               "http://user@host-name?uuid_source\\u003d%2Fproc%2Fsys%2Fkernel%2Frandom%2Fuuid\\u0026OSTYPE\\u003dlinux-gnu#c09a5efa-f015-4d7b-b889-8ee0d097dff7")
           .build();
   private final Operation defaultOperation =
-      Operation.getDefaultInstance()
-          .toBuilder()
+      Operation.getDefaultInstance().toBuilder()
           .setDone(true)
           .setName("shard/operations/123")
           .build();
@@ -69,19 +66,18 @@ public class MetricsPublisherTest {
   public void setUp() throws IOException {
     configs.getServer().setCloudRegion("test");
     configs.getServer().setClusterId("buildfarm-test");
-    configs.getServer().getMetrics().setPublisher(Metrics.PUBLISHER.AWS);
+    configs.getServer().getMetrics().setPublisher(Metrics.PUBLISHER.LOG);
   }
 
   @Test
   public void publishCompleteMetricsTest() throws InvalidProtocolBufferException {
     Operation operation =
-        defaultOperation
-            .toBuilder()
+        defaultOperation.toBuilder()
             .setResponse(Any.pack(defaultExecuteResponse))
             .setMetadata(Any.pack(defaultExecuteOperationMetadata))
             .build();
 
-    AwsMetricsPublisher metricsPublisher = new AwsMetricsPublisher();
+    LogMetricsPublisher metricsPublisher = new LogMetricsPublisher();
     assertThat(
             AbstractMetricsPublisher.formatRequestMetadataToJson(
                 metricsPublisher.populateRequestMetadata(operation, defaultRequestMetadata)))
@@ -110,7 +106,7 @@ public class MetricsPublisherTest {
     Operation operation =
         defaultOperation.toBuilder().setMetadata(Any.pack(defaultExecuteOperationMetadata)).build();
 
-    assertThat(new AwsMetricsPublisher().populateRequestMetadata(operation, defaultRequestMetadata))
+    assertThat(new LogMetricsPublisher().populateRequestMetadata(operation, defaultRequestMetadata))
         .isNotNull();
   }
 
@@ -119,7 +115,7 @@ public class MetricsPublisherTest {
     Operation operation =
         defaultOperation.toBuilder().setResponse(Any.pack(defaultExecuteResponse)).build();
 
-    assertThat(new AwsMetricsPublisher().populateRequestMetadata(operation, defaultRequestMetadata))
+    assertThat(new LogMetricsPublisher().populateRequestMetadata(operation, defaultRequestMetadata))
         .isNotNull();
   }
 
@@ -129,13 +125,12 @@ public class MetricsPublisherTest {
         Status.getDefaultInstance().toBuilder().addDetails(Any.pack(preconditionFailure)).build();
 
     Operation operation =
-        defaultOperation
-            .toBuilder()
+        defaultOperation.toBuilder()
             .setResponse(Any.pack(defaultExecuteResponse.toBuilder().setStatus(status).build()))
             .setMetadata(Any.pack(defaultExecuteOperationMetadata))
             .build();
 
-    assertThat(new AwsMetricsPublisher().populateRequestMetadata(operation, defaultRequestMetadata))
+    assertThat(new LogMetricsPublisher().populateRequestMetadata(operation, defaultRequestMetadata))
         .isNotNull();
   }
 

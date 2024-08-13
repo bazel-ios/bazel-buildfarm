@@ -14,7 +14,6 @@
 
 package build.buildfarm.worker;
 
-import com.google.common.util.concurrent.SettableFuture;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -25,33 +24,26 @@ import lombok.extern.java.Log;
 @Log
 public class Pipeline {
   private final Map<PipelineStage, Thread> stageThreads;
-  private final PipelineStageThreadGroup stageThreadGroup;
   private final Map<PipelineStage, Integer> stageClosePriorities;
   private Thread joiningThread = null;
   private boolean closing = false;
 
+  // FIXME ThreadGroup?
+
   public Pipeline() {
     stageThreads = new HashMap<>();
     stageClosePriorities = new HashMap<>();
-    stageThreadGroup = new PipelineStageThreadGroup();
   }
 
   public void add(PipelineStage stage, int closePriority) {
-    stageThreads.put(stage, new Thread(stageThreadGroup, stage, stage.name()));
+    stageThreads.put(stage, new Thread(stage));
     if (closePriority < 0) {
       throw new IllegalArgumentException("closePriority cannot be negative");
     }
     stageClosePriorities.put(stage, closePriority);
   }
 
-  /**
-   * Start the pipeline.
-   *
-   * <p>You can provide callback which is invoked when any stage has an uncaught exception, for
-   * instance to shutdown the worker gracefully
-   */
-  public void start(SettableFuture<Void> uncaughtExceptionFuture) {
-    stageThreadGroup.setUncaughtExceptionFuture(uncaughtExceptionFuture);
+  public void start() {
     for (Thread stageThread : stageThreads.values()) {
       stageThread.start();
     }
@@ -70,9 +62,12 @@ public class Pipeline {
 
   /** Inform MatchStage to stop matching or picking up new Operations from queue. */
   public void stopMatchingOperations() {
-    for (PipelineStage stage : stageClosePriorities.keySet()) {
+    for (Map.Entry<PipelineStage, Thread> entry : stageThreads.entrySet()) {
+      PipelineStage stage = entry.getKey();
       if (stage instanceof MatchStage) {
-        ((MatchStage) stage).prepareForGracefulShutdown();
+        MatchStage matchStage = (MatchStage) stage;
+        matchStage.prepareForGracefulShutdown();
+        entry.getValue().interrupt();
         return;
       }
     }
@@ -143,15 +138,17 @@ public class Pipeline {
             }
           }
           if (stageToClose != null && !stageToClose.isClosed()) {
-            log.log(Level.FINE, "Closing stage at priority " + maxPriority);
+            log.log(Level.FINER, "Closing stage " + stageToClose + " at priority " + maxPriority);
             stageToClose.close();
           }
         }
+        boolean longStageWait = !closeStage;
         for (Map.Entry<PipelineStage, Thread> stageThread : stageThreads.entrySet()) {
           PipelineStage stage = stageThread.getKey();
           Thread thread = stageThread.getValue();
           try {
-            thread.join(closeStage ? 1 : 1000);
+            // 0 is wait forever, no instant wait
+            thread.join(longStageWait ? 1000 : 1);
           } catch (InterruptedException e) {
             if (!closeStage) {
               synchronized (this) {
@@ -166,7 +163,7 @@ public class Pipeline {
 
           if (!thread.isAlive()) {
             log.log(
-                Level.FINE,
+                Level.FINER,
                 "Stage "
                     + stage.name()
                     + " has exited at priority "
@@ -181,8 +178,8 @@ public class Pipeline {
                     + stageClosePriorities.get(stage));
             thread.interrupt();
           }
+          longStageWait = false;
         }
-        closeStage = false;
         for (PipelineStage stage : inactiveStages) {
           synchronized (this) {
             stageThreads.remove(stage);

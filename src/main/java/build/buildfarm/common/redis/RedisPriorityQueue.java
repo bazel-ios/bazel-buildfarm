@@ -14,22 +14,33 @@
 
 package build.buildfarm.common.redis;
 
+import build.buildfarm.common.Queue;
 import build.buildfarm.common.StringVisitor;
-import java.util.Arrays;
+import com.google.common.collect.ImmutableList;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
-import java.util.Set;
-import redis.clients.jedis.JedisCluster;
+import redis.clients.jedis.Jedis;
 
 /**
- * @class RedisQueue
- * @brief A redis queue.
+ * @class RedisPriorityQueue
+ * @brief A redis priority queue.
  * @details A redis queue is an implementation of a queue data structure which internally uses redis
  *     to store and distribute the data. Its important to know that the lifetime of the queue
  *     persists before and after the queue data structure is created (since it exists in redis).
  *     Therefore, two redis queues with the same name, would in fact be the same underlying redis
  *     queue.
  */
-public class RedisPriorityQueue extends QueueInterface {
+public class RedisPriorityQueue implements Queue<String> {
+  private static final Clock defaultClock = Clock.systemUTC();
+  private static final long defaultPollIntervalMillis = 100;
+
+  public static Queue<String> decorate(Jedis jedis, String name) {
+    return new RedisPriorityQueue(jedis, name);
+  }
+
+  private final Jedis jedis;
+
   /**
    * @field name
    * @brief The unique name of the queue.
@@ -39,18 +50,16 @@ public class RedisPriorityQueue extends QueueInterface {
   private final String name;
 
   private final String script;
-  private Timestamp time;
-  private final List<String> keys;
+  private final Clock clock;
   private final long pollIntervalMillis;
-  private static long defaultPollIntervalMillis = 100;
 
   /**
    * @brief Constructor.
    * @details Construct a named redis queue with an established redis cluster.
    * @param name The global name of the queue.
    */
-  public RedisPriorityQueue(String name) {
-    this(name, new Timestamp(), defaultPollIntervalMillis);
+  public RedisPriorityQueue(Jedis jedis, String name) {
+    this(jedis, name, defaultPollIntervalMillis);
   }
 
   /**
@@ -58,10 +67,9 @@ public class RedisPriorityQueue extends QueueInterface {
    * @details Construct a named redis queue with an established redis cluster. Used to ease the
    *     testing of the order of the queued actions
    * @param name The global name of the queue.
-   * @param time Timestamp of the operation.
    */
-  public RedisPriorityQueue(String name, Timestamp time) {
-    this(name, time, defaultPollIntervalMillis);
+  public RedisPriorityQueue(Jedis jedis, String name, Clock clock) {
+    this(jedis, name, clock, defaultPollIntervalMillis);
   }
 
   /**
@@ -71,8 +79,8 @@ public class RedisPriorityQueue extends QueueInterface {
    * @param name The global name of the queue.
    * @param pollIntervalMillis pollInterval to use when dqueuing from redis.
    */
-  public RedisPriorityQueue(String name, long pollIntervalMillis) {
-    this(name, new Timestamp(), pollIntervalMillis);
+  public RedisPriorityQueue(Jedis jedis, String name, long pollIntervalMillis) {
+    this(jedis, name, defaultClock, pollIntervalMillis);
   }
 
   /**
@@ -83,10 +91,10 @@ public class RedisPriorityQueue extends QueueInterface {
    * @param time Timestamp of the operation.
    * @param pollIntervalMillis pollInterval to use when dqueuing from redis.
    */
-  public RedisPriorityQueue(String name, Timestamp time, long pollIntervalMillis) {
+  public RedisPriorityQueue(Jedis jedis, String name, Clock clock, long pollIntervalMillis) {
+    this.jedis = jedis;
     this.name = name;
-    this.time = time;
-    this.keys = Arrays.asList(name);
+    this.clock = clock;
     this.script = getLuaScript();
     this.pollIntervalMillis = pollIntervalMillis;
   }
@@ -97,19 +105,21 @@ public class RedisPriorityQueue extends QueueInterface {
    * @param val The value to push onto the priority queue.
    */
   @Override
-  public void push(JedisCluster jedis, String val) {
-    push(jedis, val, 0);
+  public boolean offer(String val) {
+    return offer(val, 0);
   }
 
   /**
    * @brief Push a value onto the queue with specified priority.
-   * @details Adds the value into the backend redis ordered set.
+   * @details Adds the value into the backend redis ordered set, with timestamp primary insertion to
+   *     guarantee FIFO within a single priority level
    * @param val The value to push onto the priority queue.
    * @param priority The priority of action 0 means highest
    */
   @Override
-  public void push(JedisCluster jedis, String val, double priority) {
-    jedis.zadd(name, priority, time.getNanos() + ":" + val);
+  public boolean offer(String val, double priority) {
+    jedis.zadd(name, priority, clock.millis() + ":" + val);
+    return true;
   }
 
   /**
@@ -120,7 +130,7 @@ public class RedisPriorityQueue extends QueueInterface {
    * @note Suggested return identifier: wasRemoved.
    */
   @Override
-  public boolean removeFromDequeue(JedisCluster jedis, String val) {
+  public boolean removeFromDequeue(String val) {
     return jedis.lrem(getDequeueName(), -1, val) != 0;
   }
 
@@ -131,8 +141,7 @@ public class RedisPriorityQueue extends QueueInterface {
    * @return Whether or not the value was removed.
    * @note Suggested return identifier: wasRemoved.
    */
-  @Override
-  public boolean removeAll(JedisCluster jedis, String val) {
+  public boolean removeAll(String val) {
     return jedis.zrem(name, val) != 0;
   }
 
@@ -141,18 +150,18 @@ public class RedisPriorityQueue extends QueueInterface {
    * @details This pops the element from one queue atomically into an internal list called the
    *     dequeue. It will wait until the timeout has expired. Null is returned if the timeout has
    *     expired.
-   * @param timeout_s Timeout to wait if there is no item to dequeue. (units: seconds (s))
+   * @param timeout Timeout to wait if there is no item to dequeue.
    * @return The value of the transfered element. null if the thread was interrupted.
    * @note Overloaded.
    * @note Suggested return identifier: val.
    */
   @Override
-  public String dequeue(JedisCluster jedis, int timeout_s) throws InterruptedException {
-    int maxAttempts = (int) (timeout_s / (pollIntervalMillis / 1000.0));
-    List<String> args = Arrays.asList(name, getDequeueName(), "true");
+  public String take(Duration timeout) throws InterruptedException {
+    int maxAttempts = Math.max(1, (int) (timeout.toMillis() / pollIntervalMillis));
+    List<String> args = ImmutableList.of(name, getDequeueName(), "true");
     String val;
     for (int i = 0; i < maxAttempts; ++i) {
-      Object obj_val = jedis.eval(script, keys, args);
+      Object obj_val = jedis.eval(script, ImmutableList.of(name), args);
       val = String.valueOf(obj_val);
       if (!isEmpty(val)) {
         return val;
@@ -170,15 +179,12 @@ public class RedisPriorityQueue extends QueueInterface {
    * @note Suggested return identifier: val.
    */
   @Override
-  public String nonBlockingDequeue(JedisCluster jedis) throws InterruptedException {
-    List<String> args = Arrays.asList(name, getDequeueName());
-    Object obj_val = jedis.eval(script, keys, args);
+  public String poll() {
+    List<String> args = ImmutableList.of(name, getDequeueName());
+    Object obj_val = jedis.eval(script, ImmutableList.of(name), args);
     String val = String.valueOf(obj_val);
     if (!isEmpty(val)) {
       return val;
-    }
-    if (Thread.currentThread().isInterrupted()) {
-      throw new InterruptedException();
     }
     return null;
   }
@@ -189,7 +195,6 @@ public class RedisPriorityQueue extends QueueInterface {
    * @return The name of the queue.
    * @note Suggested return identifier: name.
    */
-  @Override
   public String getName() {
     return name;
   }
@@ -211,8 +216,7 @@ public class RedisPriorityQueue extends QueueInterface {
    * @return The current length of the queue.
    * @note Suggested return identifier: length.
    */
-  @Override
-  public long size(JedisCluster jedis) {
+  public long size() {
     return jedis.zcard(name);
   }
 
@@ -223,8 +227,8 @@ public class RedisPriorityQueue extends QueueInterface {
    * @note Overloaded.
    */
   @Override
-  public void visit(JedisCluster jedis, StringVisitor visitor) {
-    visit(jedis, name, visitor);
+  public void visit(StringVisitor visitor) {
+    visit(name, visitor);
   }
 
   /**
@@ -233,7 +237,7 @@ public class RedisPriorityQueue extends QueueInterface {
    * @param visitor A visitor for each visited element in the queue.
    */
   @Override
-  public void visitDequeue(JedisCluster jedis, StringVisitor visitor) {
+  public void visitDequeue(StringVisitor visitor) {
     int listPageSize = 10000;
     int index = 0;
     int nextIndex = listPageSize;
@@ -256,11 +260,11 @@ public class RedisPriorityQueue extends QueueInterface {
    * @param visitor A visitor for each visited element in the queue.
    * @note Overloaded.
    */
-  private void visit(JedisCluster jedis, String queueName, StringVisitor visitor) {
+  private void visit(String queueName, StringVisitor visitor) {
     int listPageSize = 10000;
     int index = 0;
     int nextIndex = listPageSize;
-    Set<String> entries;
+    List<String> entries;
 
     do {
       entries = jedis.zrange(queueName, index, nextIndex - 1);
@@ -290,14 +294,14 @@ public class RedisPriorityQueue extends QueueInterface {
         "end",
         "assert(not isempty(zset), 'ERR1: zset missing')",
         "assert(not isempty(deqName), 'ERR2: dequeue missing')",
-        "  local pped = redis.call('ZRANGE', zset, 0, 0)",
-        "  if next(pped) ~= nil then",
-        "    for _,item in ipairs(pped) do",
-        "      val = item:gsub('^%d*:', '')",
-        "      redis.call('ZREM', zset, item)",
-        "      redis.call('LPUSH', deqName, val)",
-        "    end",
+        "local pped = redis.call('ZRANGE', zset, 0, 0)",
+        "if next(pped) ~= nil then",
+        "  for _,item in ipairs(pped) do",
+        "    val = string.gsub(item, '^%d*:', '')",
+        "    redis.call('ZREM', zset, item)",
+        "    redis.call('LPUSH', deqName, val)",
         "  end",
+        "end",
         "return val");
   }
 

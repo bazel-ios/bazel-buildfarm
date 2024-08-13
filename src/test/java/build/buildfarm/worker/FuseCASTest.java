@@ -15,6 +15,7 @@
 package build.buildfarm.worker;
 
 import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.assertThrows;
 
 import build.bazel.remote.execution.v2.Digest;
 import build.bazel.remote.execution.v2.Directory;
@@ -29,9 +30,7 @@ import jnr.ffi.Struct;
 import jnr.ffi.provider.DelegatingMemoryIO;
 import jnr.ffi.provider.converters.StringResultConverter;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 import ru.serce.jnrfuse.ErrorCodes;
@@ -41,8 +40,6 @@ import ru.serce.jnrfuse.struct.FuseFileInfo;
 @RunWith(JUnit4.class)
 public class FuseCASTest {
   private FuseCAS fuseCAS;
-
-  @Rule public final ExpectedException exception = ExpectedException.none();
 
   private final ByteString content = ByteString.copyFromUtf8("Peanut Butter");
 
@@ -97,30 +94,34 @@ public class FuseCASTest {
     assertThat(fuseCAS.getattr("/test", createFileStat())).isEqualTo(0);
   }
 
-  @Test
+  @Test(expected = IllegalArgumentException.class)
   public void createInputRootEmptyTopdirThrows() throws IOException, InterruptedException {
-    exception.expect(IllegalArgumentException.class);
     fuseCAS.createInputRoot("", Digest.newBuilder().build());
   }
 
-  @Test
+  @Test(expected = IllegalArgumentException.class)
   public void createInputRootEmptyAfterSlashes() throws IOException, InterruptedException {
-    exception.expect(IllegalArgumentException.class);
     fuseCAS.createInputRoot("///", Digest.newBuilder().build());
   }
 
   @Test
   public void createInputRootFileAsDirectoryThrows() throws IOException, InterruptedException {
     fuseCAS.createInputRoot("test", Digest.newBuilder().setHash("/test").build());
-    exception.expect(IllegalArgumentException.class);
-    fuseCAS.createInputRoot("test/file/subdir", Digest.newBuilder().build());
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> {
+          fuseCAS.createInputRoot("test/file/subdir", Digest.newBuilder().build());
+        });
   }
 
   @Test
   public void createInputRootEmptyComponentsIgnored() throws IOException, InterruptedException {
     fuseCAS.createInputRoot("/test/", Digest.newBuilder().setHash("/test").build());
-    exception.expect(IllegalArgumentException.class);
-    fuseCAS.createInputRoot("test/file/subdir", Digest.newBuilder().build());
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> {
+          fuseCAS.createInputRoot("test/file/subdir", Digest.newBuilder().build());
+        });
   }
 
   @Test
@@ -370,14 +371,14 @@ public class FuseCASTest {
 
     ByteString data = ByteString.copyFromUtf8("Hello, World\n");
     Pointer buf = pointerFromByteString(data);
-    assertThat(fuseCAS.write("/foo", buf, data.size(), /* offset=*/ 0, fi)).isEqualTo(data.size());
+    assertThat(fuseCAS.write("/foo", buf, data.size(), /* offset= */ 0, fi)).isEqualTo(data.size());
     FileStat fileStat = createFileStat();
     fuseCAS.getattr("/foo", fileStat);
     assertThat(fileStat.st_size.longValue()).isEqualTo(data.size());
 
     ByteString overwriteData = ByteString.copyFromUtf8("Goodbye");
     Pointer overwriteBuf = pointerFromByteString(overwriteData);
-    fuseCAS.write("/foo", overwriteBuf, overwriteData.size(), /* offset=*/ 0, fi);
+    fuseCAS.write("/foo", overwriteBuf, overwriteData.size(), /* offset= */ 0, fi);
     fuseCAS.getattr("/foo", fileStat);
     assertThat(fileStat.st_size.longValue()).isEqualTo(data.size());
   }
@@ -403,7 +404,8 @@ public class FuseCASTest {
     FuseFileInfo fi = new SystemFuseFileInfo();
     //noinspection OctalInteger
     fuseCAS.create("/foo", 0644, fi);
-    assertThat(fuseCAS.read("/foo", /* buf=*/ null, /* size=*/ 1, /* offset=*/ 0, fi)).isEqualTo(0);
+    assertThat(fuseCAS.read("/foo", /* buf= */ null, /* size= */ 1, /* offset= */ 0, fi))
+        .isEqualTo(0);
   }
 
   @Test
@@ -414,12 +416,12 @@ public class FuseCASTest {
 
     ByteString data = ByteString.copyFromUtf8("Hello, World\n");
     Pointer buf = pointerFromByteString(data);
-    fuseCAS.write("/foo", buf, data.size(), /* offset=*/ 0, fi);
+    fuseCAS.write("/foo", buf, data.size(), /* offset= */ 0, fi);
 
     byte[] readData = new byte[5];
     u8[] array = Struct.arrayOf(Runtime.getSystemRuntime(), u8.class, readData.length);
     Pointer readBuf = ((DelegatingMemoryIO) Struct.getMemory(array[0])).getDelegatedMemoryIO();
-    assertThat(fuseCAS.read("/foo", readBuf, /* size=*/ readData.length, /* offset=*/ 7, fi))
+    assertThat(fuseCAS.read("/foo", readBuf, /* size= */ readData.length, /* offset= */ 7, fi))
         .isEqualTo(readData.length);
     readBuf.get(0, readData, 0, readData.length);
     assertThat(new String(readData, 0)).isEqualTo("World");
@@ -435,7 +437,8 @@ public class FuseCASTest {
     fi.flags.set(0);
     assertThat(fuseCAS.open("/test/file", fi)).isEqualTo(0);
     assertThat(
-            fuseCAS.read("/test/file", /* buf=*/ buf, /* size=*/ data.length, /* offset=*/ 0, fi))
+            fuseCAS.read(
+                "/test/file", /* buf= */ buf, /* size= */ data.length, /* offset= */ 0, fi))
         .isEqualTo(data.length);
     buf.get(0, data, 0, data.length);
     assertThat(new String(data, 0)).isEqualTo("Peanut");
@@ -447,8 +450,8 @@ public class FuseCASTest {
             fuseCAS.fallocate(
                 "/op_not_supp",
                 /* FALLOC_FL_PUNCH_HOLE */ 2,
-                /* off=*/ -1,
-                /* length=*/ -1,
+                /* off= */ -1,
+                /* length= */ -1,
                 new SystemFuseFileInfo()))
         .isEqualTo(-ErrorCodes.EOPNOTSUPP());
   }
@@ -458,7 +461,7 @@ public class FuseCASTest {
     fuseCAS.mkdir("/foo", 755);
     assertThat(
             fuseCAS.fallocate(
-                "/foo", /* mode=*/ 0, /* off=*/ -1, /* length=*/ -1, new SystemFuseFileInfo()))
+                "/foo", /* mode= */ 0, /* off= */ -1, /* length= */ -1, new SystemFuseFileInfo()))
         .isEqualTo(-ErrorCodes.EISDIR());
   }
 
@@ -468,9 +471,9 @@ public class FuseCASTest {
     assertThat(
             fuseCAS.fallocate(
                 "/test/file",
-                /* mode=*/ 0,
-                /* off=*/ -1,
-                /* length=*/ -1,
+                /* mode= */ 0,
+                /* off= */ -1,
+                /* length= */ -1,
                 new SystemFuseFileInfo()))
         .isEqualTo(-ErrorCodes.EPERM());
   }
@@ -481,7 +484,7 @@ public class FuseCASTest {
     fuseCAS.create("/foo", 0644, new SystemFuseFileInfo());
     assertThat(
             fuseCAS.fallocate(
-                "/foo", /* mode=*/ 0, /* off=*/ 0, /* length=*/ 1024, new SystemFuseFileInfo()))
+                "/foo", /* mode= */ 0, /* off= */ 0, /* length= */ 1024, new SystemFuseFileInfo()))
         .isEqualTo(0);
     FileStat fileStat = createFileStat();
     fuseCAS.getattr("/foo", fileStat);

@@ -20,9 +20,10 @@ import build.buildfarm.common.ScanCount;
 import build.buildfarm.common.redis.RedisClient;
 import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
-import redis.clients.jedis.JedisClusterPipeline;
+import redis.clients.jedis.PipelineBase;
 
 /**
  * @class JedisCasWorkerMap
@@ -116,13 +117,13 @@ public class JedisCasWorkerMap implements CasWorkerMap {
       throws IOException {
     client.run(
         jedis -> {
-          JedisClusterPipeline p = jedis.pipelined();
-          for (Digest blobDigest : blobDigests) {
-            String key = redisCasKey(blobDigest);
-            p.sadd(key, workerName);
-            p.expire(key, keyExpiration_s);
+          try (PipelineBase p = jedis.pipelined()) {
+            for (Digest blobDigest : blobDigests) {
+              String key = redisCasKey(blobDigest);
+              p.sadd(key, workerName);
+              p.expire(key, keyExpiration_s);
+            }
           }
-          p.sync();
         });
   }
 
@@ -152,12 +153,12 @@ public class JedisCasWorkerMap implements CasWorkerMap {
       throws IOException {
     client.run(
         jedis -> {
-          JedisClusterPipeline p = jedis.pipelined();
-          for (Digest blobDigest : blobDigests) {
-            String key = redisCasKey(blobDigest);
-            p.srem(key, workerName);
+          try (PipelineBase p = jedis.pipelined()) {
+            for (Digest blobDigest : blobDigests) {
+              String key = redisCasKey(blobDigest);
+              p.srem(key, workerName);
+            }
           }
-          p.sync();
         });
   }
 
@@ -187,6 +188,12 @@ public class JedisCasWorkerMap implements CasWorkerMap {
   public Set<String> get(RedisClient client, Digest blobDigest) throws IOException {
     String key = redisCasKey(blobDigest);
     return client.call(jedis -> jedis.smembers(key));
+  }
+
+  @Override
+  public long insertTime(RedisClient client, Digest blobDigest) throws IOException {
+    String key = redisCasKey(blobDigest);
+    return Instant.now().getEpochSecond() - keyExpiration_s + client.call(jedis -> jedis.ttl(key));
   }
 
   /**
@@ -225,6 +232,17 @@ public class JedisCasWorkerMap implements CasWorkerMap {
    */
   public int size(RedisClient client) throws IOException {
     return client.call(jedis -> ScanCount.get(jedis, name + ":*", 1000));
+  }
+
+  @Override
+  public void setExpire(RedisClient client, Iterable<Digest> blobDigests) throws IOException {
+    client.run(
+        jedis -> {
+          for (Digest blobDigest : blobDigests) {
+            String key = redisCasKey(blobDigest);
+            jedis.expire(key, keyExpiration_s);
+          }
+        });
   }
 
   /**
