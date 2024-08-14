@@ -15,6 +15,8 @@
 package build.buildfarm.instance.shard;
 
 import static java.lang.String.format;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 import build.bazel.remote.execution.v2.ActionResult;
 import build.bazel.remote.execution.v2.Digest;
@@ -51,11 +53,16 @@ import build.buildfarm.v1test.GetClientStartTime;
 import build.buildfarm.v1test.GetClientStartTimeRequest;
 import build.buildfarm.v1test.GetClientStartTimeResult;
 import build.buildfarm.v1test.OperationChange;
+import build.buildfarm.v1test.OperationQueueStatus;
 import build.buildfarm.v1test.QueueEntry;
+import build.buildfarm.v1test.QueueStatus;
 import build.buildfarm.v1test.QueuedOperationMetadata;
 import build.buildfarm.v1test.ShardWorker;
 import build.buildfarm.v1test.WorkerChange;
 import build.buildfarm.v1test.WorkerType;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Suppliers;
+import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ListMultimap;
@@ -73,17 +80,18 @@ import com.google.protobuf.util.Timestamps;
 import com.google.rpc.Code;
 import com.google.rpc.PreconditionFailure;
 import com.google.rpc.Status;
+import io.grpc.Deadline;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -93,12 +101,13 @@ import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import javax.naming.ConfigurationException;
 import lombok.extern.java.Log;
-import redis.clients.jedis.JedisCluster;
+import redis.clients.jedis.UnifiedJedis;
 
 @Log
 public class RedisShardBackplane implements Backplane {
   private static BuildfarmConfigs configs = BuildfarmConfigs.getInstance();
 
+  private static final int workerSetMaxAge = 3; // seconds
   private static final JsonFormat.Parser operationParser =
       JsonFormat.parser()
           .usingTypeRegistry(
@@ -122,16 +131,12 @@ public class RedisShardBackplane implements Backplane {
                   .add(PreconditionFailure.getDescriptor())
                   .build());
 
-  private static class ActionAmounts {
-    Integer build = 0;
-    Integer test = 0;
-    Integer unknown = 0;
-  }
-
   private final String source; // used in operation change publication
+  private final boolean subscribeToBackplane;
+  private final boolean runFailsafeOperation;
   private final Function<Operation, Operation> onPublish;
   private final Function<Operation, Operation> onComplete;
-  private final Supplier<JedisCluster> jedisClusterFactory;
+  private final Supplier<UnifiedJedis> jedisClusterFactory;
 
   private @Nullable InterruptingRunnable onUnsubscribe = null;
   private Thread subscriptionThread = null;
@@ -139,30 +144,55 @@ public class RedisShardBackplane implements Backplane {
   private RedisShardSubscriber subscriber = null;
   private RedisShardSubscription operationSubscription = null;
   private ExecutorService subscriberService = null;
+  private ExecutorService dequeueService = null;
   private @Nullable RedisClient client = null;
 
-  private final Set<String> storageWorkerSet = Collections.synchronizedSet(new HashSet<>());
-  private long workerSetExpiresAt = 0;
+  private Deadline storageWorkersDeadline = null;
+  private final Map<String, ShardWorker> storageWorkers = new ConcurrentHashMap<>();
+  private final Supplier<Set<String>> recentExecuteWorkers;
 
   private DistributedState state = new DistributedState();
 
   public RedisShardBackplane(
       String source,
+      boolean subscribeToBackplane,
+      boolean runFailsafeOperation,
       Function<Operation, Operation> onPublish,
       Function<Operation, Operation> onComplete)
       throws ConfigurationException {
-    this(source, onPublish, onComplete, JedisClusterFactory.create());
+    this(
+        source,
+        subscribeToBackplane,
+        runFailsafeOperation,
+        onPublish,
+        onComplete,
+        JedisClusterFactory.create(source));
   }
 
   public RedisShardBackplane(
       String source,
+      boolean subscribeToBackplane,
+      boolean runFailsafeOperation,
       Function<Operation, Operation> onPublish,
       Function<Operation, Operation> onComplete,
-      Supplier<JedisCluster> jedisClusterFactory) {
+      Supplier<UnifiedJedis> jedisClusterFactory) {
     this.source = source;
+    this.subscribeToBackplane = subscribeToBackplane;
+    this.runFailsafeOperation = runFailsafeOperation;
     this.onPublish = onPublish;
     this.onComplete = onComplete;
     this.jedisClusterFactory = jedisClusterFactory;
+    recentExecuteWorkers =
+        Suppliers.memoizeWithExpiration(
+            () -> {
+              try {
+                return client.call(this::fetchAndExpireExecuteWorkers).keySet();
+              } catch (IOException e) {
+                throw new RuntimeException(e);
+              }
+            },
+            workerSetMaxAge,
+            SECONDS);
   }
 
   @SuppressWarnings("NullableProblems")
@@ -194,7 +224,7 @@ public class RedisShardBackplane implements Backplane {
         JsonFormat.parser().merge(entry, executeEntry);
         visit(executeEntry.build(), entry);
       } catch (InvalidProtocolBufferException e) {
-        log.log(Level.FINE, "invalid ExecuteEntry json: " + entry, e);
+        log.log(Level.FINER, "invalid ExecuteEntry json: " + entry, e);
       }
     }
   }
@@ -210,7 +240,7 @@ public class RedisShardBackplane implements Backplane {
     return null;
   }
 
-  private void scanProcessing(JedisCluster jedis, Consumer<String> onOperationName, Instant now) {
+  private void scanProcessing(UnifiedJedis jedis, Consumer<String> onOperationName, Instant now) {
     state.prequeue.visitDequeue(
         jedis,
         new ExecuteEntryListVisitor() {
@@ -218,17 +248,20 @@ public class RedisShardBackplane implements Backplane {
           protected void visit(ExecuteEntry executeEntry, String executeEntryJson) {
             String operationName = executeEntry.getOperationName();
             String value = state.processingOperations.get(jedis, operationName);
-            long defaultTimeout_ms = configs.getBackplane().getProcessingTimeoutMillis();
+            long processingTimeout_ms = configs.getBackplane().getProcessingTimeoutMillis();
 
             // get the operation's expiration
             Instant expiresAt = convertToMilliInstant(value, operationName);
 
             // if expiration is invalid, add a valid one.
             if (expiresAt == null) {
-              expiresAt = now.plusMillis(defaultTimeout_ms);
+              expiresAt = now.plusMillis(processingTimeout_ms);
               String keyValue = String.format("%d", expiresAt.toEpochMilli());
-              long timeout_s = Time.millisecondsToSeconds(defaultTimeout_ms);
-              state.processingOperations.insert(jedis, operationName, keyValue, timeout_s);
+              // persist the flag for at least an hour, and at most 10 times longer than the timeout
+              // the key identifies so that we don't loop with the flag expired, resetting the
+              // unaccounted for operation
+              long expire_s = Math.max(3600, Time.millisecondsToSeconds(processingTimeout_ms) * 10);
+              state.processingOperations.insert(jedis, operationName, keyValue, expire_s);
             }
 
             // handle expiration
@@ -243,7 +276,7 @@ public class RedisShardBackplane implements Backplane {
         });
   }
 
-  private void scanDispatching(JedisCluster jedis, Consumer<String> onOperationName, Instant now) {
+  private void scanDispatching(UnifiedJedis jedis, Consumer<String> onOperationName, Instant now) {
     state.operationQueue.visitDequeue(
         jedis,
         new QueueEntryListVisitor() {
@@ -251,17 +284,21 @@ public class RedisShardBackplane implements Backplane {
           protected void visit(QueueEntry queueEntry, String queueEntryJson) {
             String operationName = queueEntry.getExecuteEntry().getOperationName();
             String value = state.dispatchingOperations.get(jedis, operationName);
-            long defaultTimeout_ms = configs.getBackplane().getDispatchingTimeoutMillis();
+            long dispatchingTimeout_ms = configs.getBackplane().getDispatchingTimeoutMillis();
 
             // get the operation's expiration
             Instant expiresAt = convertToMilliInstant(value, operationName);
 
             // if expiration is invalid, add a valid one.
             if (expiresAt == null) {
-              expiresAt = now.plusMillis(defaultTimeout_ms);
+              expiresAt = now.plusMillis(dispatchingTimeout_ms);
               String keyValue = String.format("%d", expiresAt.toEpochMilli());
-              long timeout_s = Time.millisecondsToSeconds(defaultTimeout_ms);
-              state.dispatchingOperations.insert(jedis, operationName, keyValue, timeout_s);
+              // persist the flag for at least an hour, and at most 10 times longer than the timeout
+              // the key identifies so that we don't loop with the flag expired, resetting the
+              // unaccounted for operation
+              long expire_s =
+                  Math.max(3600, Time.millisecondsToSeconds(dispatchingTimeout_ms) * 10);
+              state.dispatchingOperations.insert(jedis, operationName, keyValue, expire_s);
             }
 
             // handle expiration
@@ -276,7 +313,7 @@ public class RedisShardBackplane implements Backplane {
         });
   }
 
-  private void scanPrequeue(JedisCluster jedis, Consumer<String> onOperationName) {
+  private void scanPrequeue(UnifiedJedis jedis, Consumer<String> onOperationName) {
     state.prequeue.visit(
         jedis,
         new ExecuteEntryListVisitor() {
@@ -287,7 +324,7 @@ public class RedisShardBackplane implements Backplane {
         });
   }
 
-  private void scanQueue(JedisCluster jedis, Consumer<String> onOperationName) {
+  private void scanQueue(UnifiedJedis jedis, Consumer<String> onOperationName) {
     state.operationQueue.visit(
         jedis,
         new QueueEntryListVisitor() {
@@ -298,13 +335,13 @@ public class RedisShardBackplane implements Backplane {
         });
   }
 
-  private void scanDispatched(JedisCluster jedis, Consumer<String> onOperationName) {
+  private void scanDispatched(UnifiedJedis jedis, Consumer<String> onOperationName) {
     for (String operationName : state.dispatchedOperations.keys(jedis)) {
       onOperationName.accept(operationName);
     }
   }
 
-  private void updateWatchers(JedisCluster jedis) {
+  private void updateWatchers(UnifiedJedis jedis) {
     Instant now = Instant.now();
     Instant expiresAt = nextExpiresAt(now);
     Set<String> expiringChannels = Sets.newHashSet(subscriber.expiredWatchedOperationChannels(now));
@@ -318,10 +355,10 @@ public class RedisShardBackplane implements Backplane {
 
     if (!expiringChannels.isEmpty()) {
       log.log(
-          Level.FINE,
+          Level.FINER,
           format("Scan %d watches, %s, expiresAt: %s", expiringChannels.size(), now, expiresAt));
 
-      log.log(Level.FINE, "Scan prequeue");
+      log.log(Level.FINER, "Scan prequeue");
       // scan prequeue, pet watches
       scanPrequeue(jedis, resetChannel);
     }
@@ -330,7 +367,7 @@ public class RedisShardBackplane implements Backplane {
     scanProcessing(jedis, resetChannel, now);
 
     if (!expiringChannels.isEmpty()) {
-      log.log(Level.FINE, "Scan queue");
+      log.log(Level.FINER, "Scan queue");
       // scan queue, pet watches
       scanQueue(jedis, resetChannel);
     }
@@ -339,7 +376,7 @@ public class RedisShardBackplane implements Backplane {
     scanDispatching(jedis, resetChannel, now);
 
     if (!expiringChannels.isEmpty()) {
-      log.log(Level.FINE, "Scan dispatched");
+      log.log(Level.FINER, "Scan dispatched");
       // scan dispatched pet watches
       scanDispatched(jedis, resetChannel);
     }
@@ -364,7 +401,7 @@ public class RedisShardBackplane implements Backplane {
   }
 
   void publish(
-      JedisCluster jedis,
+      UnifiedJedis jedis,
       String channel,
       Instant effectiveAt,
       OperationChange.Builder operationChange) {
@@ -379,7 +416,7 @@ public class RedisShardBackplane implements Backplane {
     }
   }
 
-  void publishReset(JedisCluster jedis, Operation operation) {
+  void publishReset(UnifiedJedis jedis, Operation operation) {
     Instant effectiveAt = Instant.now();
     Instant expiresAt = nextExpiresAt(effectiveAt);
     publish(
@@ -401,7 +438,7 @@ public class RedisShardBackplane implements Backplane {
         .build();
   }
 
-  void publishExpiration(JedisCluster jedis, String channel, Instant effectiveAt) {
+  void publishExpiration(UnifiedJedis jedis, String channel, Instant effectiveAt) {
     publish(
         jedis,
         channel,
@@ -411,7 +448,7 @@ public class RedisShardBackplane implements Backplane {
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})
-  public void updateWatchedIfDone(JedisCluster jedis) {
+  public void updateWatchedIfDone(UnifiedJedis jedis) {
     List<String> operationChannels = subscriber.watchedOperationChannels();
     if (operationChannels.isEmpty()) {
       return;
@@ -433,7 +470,7 @@ public class RedisShardBackplane implements Backplane {
         }
         subscriber.onOperation(operationChannel(operationName), operation, nextExpiresAt(now));
         log.log(
-            Level.FINE,
+            Level.FINER,
             format(
                 "operation %s done due to %s",
                 operationName, operation == null ? "null" : "completed"));
@@ -450,24 +487,22 @@ public class RedisShardBackplane implements Backplane {
         Multimaps.synchronizedListMultimap(
             MultimapBuilder.linkedHashKeys().arrayListValues().build());
     subscriberService = BuildfarmExecutors.getSubscriberPool();
+    dequeueService = BuildfarmExecutors.getDequeuePool();
     subscriber =
         new RedisShardSubscriber(
-            watchers,
-            storageWorkerSet,
-            configs.getBackplane().getWorkerChannel(),
-            subscriberService);
+            watchers, storageWorkers, configs.getBackplane().getWorkerChannel(), subscriberService);
 
     operationSubscription =
         new RedisShardSubscription(
             subscriber,
-            /* onUnsubscribe=*/ () -> {
+            /* onUnsubscribe= */ () -> {
               subscriptionThread = null;
               if (onUnsubscribe != null) {
                 onUnsubscribe.runInterruptibly();
               }
             },
-            /* onReset=*/ this::updateWatchedIfDone,
-            /* subscriptions=*/ subscriber::subscribedChannels,
+            /* onReset= */ this::updateWatchedIfDone,
+            /* subscriptions= */ subscriber::subscribedChannels,
             client);
 
     // use Executors...
@@ -483,7 +518,7 @@ public class RedisShardBackplane implements Backplane {
             () -> {
               while (!Thread.currentThread().isInterrupted()) {
                 try {
-                  TimeUnit.SECONDS.sleep(10);
+                  SECONDS.sleep(10);
                   client.run(this::updateWatchers);
                 } catch (InterruptedException e) {
                   Thread.currentThread().interrupt();
@@ -503,18 +538,23 @@ public class RedisShardBackplane implements Backplane {
     // Construct a single redis client to be used throughout the entire backplane.
     // We wish to avoid various synchronous and error handling issues that could occur when using
     // multiple clients.
-    client =
-        new RedisClient(
-            jedisClusterFactory,
-            configs.getBackplane().getReconnectClientAttempts(),
-            configs.getBackplane().getReconnectClientWaitDurationMs());
-    // Create containers that make up the backplane
-    state = DistributedStateCreator.create(client);
+    start(new RedisClient(jedisClusterFactory.get()), clientPublicName);
+  }
 
-    if (configs.getBackplane().isSubscribeToBackplane()) {
+  private void start(RedisClient client, String clientPublicName) throws IOException {
+    // Create containers that make up the backplane
+    start(client, DistributedStateCreator.create(client), clientPublicName);
+  }
+
+  @VisibleForTesting
+  void start(RedisClient client, DistributedState state, String clientPublicName)
+      throws IOException {
+    this.client = client;
+    this.state = state;
+    if (subscribeToBackplane) {
       startSubscriptionThread();
     }
-    if (configs.getBackplane().isRunFailsafeOperation()) {
+    if (runFailsafeOperation) {
       startFailsafeOperationThread();
     }
 
@@ -529,24 +569,35 @@ public class RedisShardBackplane implements Backplane {
     if (failsafeOperationThread != null) {
       failsafeOperationThread.interrupt();
       failsafeOperationThread.join();
-      log.log(Level.FINE, "failsafeOperationThread has been stopped");
+      log.log(Level.FINER, "failsafeOperationThread has been stopped");
     }
     if (operationSubscription != null) {
       operationSubscription.stop();
       if (subscriptionThread != null) {
         subscriptionThread.join();
       }
-      log.log(Level.FINE, "subscriptionThread has been stopped");
+      log.log(Level.FINER, "subscriptionThread has been stopped");
+    }
+    if (dequeueService != null) {
+      dequeueService.shutdown();
+      if (dequeueService.awaitTermination(10, SECONDS)) {
+        log.log(Level.FINER, "dequeueService has been stopped");
+      } else {
+        log.log(Level.WARNING, "dequeueService has not stopped");
+      }
     }
     if (subscriberService != null) {
       subscriberService.shutdown();
-      subscriberService.awaitTermination(10, TimeUnit.SECONDS);
-      log.log(Level.FINE, "subscriberService has been stopped");
+      if (subscriberService.awaitTermination(10, SECONDS)) {
+        log.log(Level.FINER, "subscriberService has been stopped");
+      } else {
+        log.log(Level.WARNING, "subscriberService has not stopped");
+      }
     }
     if (client != null) {
       client.close();
       client = null;
-      log.log(Level.FINE, "client has been closed");
+      log.log(Level.FINER, "client has been closed");
     }
   }
 
@@ -572,13 +623,14 @@ public class RedisShardBackplane implements Backplane {
   @Override
   public void addWorker(ShardWorker shardWorker) throws IOException {
     String json = JsonFormat.printer().print(shardWorker);
+    Timestamp effectiveAt = Timestamps.fromMillis(shardWorker.getFirstRegisteredAt());
     String workerChangeJson =
         JsonFormat.printer()
             .print(
                 WorkerChange.newBuilder()
                     .setEffectiveAt(toTimestamp(Instant.now()))
                     .setName(shardWorker.getEndpoint())
-                    .setAdd(WorkerChange.Add.getDefaultInstance())
+                    .setAdd(WorkerChange.Add.newBuilder().setEffectiveAt(effectiveAt).build())
                     .build());
     client.call(
         jedis -> {
@@ -592,7 +644,7 @@ public class RedisShardBackplane implements Backplane {
         });
   }
 
-  private boolean addWorkerByType(JedisCluster jedis, ShardWorker shardWorker, String json) {
+  private boolean addWorkerByType(UnifiedJedis jedis, ShardWorker shardWorker, String json) {
     int type = shardWorker.getWorkerType();
     if (type == 0) {
       return false; // no destination
@@ -607,12 +659,14 @@ public class RedisShardBackplane implements Backplane {
     return result;
   }
 
-  private boolean removeWorkerAndPublish(JedisCluster jedis, String name, String changeJson) {
-    if (state.storageWorkers.remove(jedis, name) || state.executeWorkers.remove(jedis, name)) {
+  private boolean removeWorkerAndPublish(
+      UnifiedJedis jedis, String name, String changeJson, boolean storage) {
+    boolean removedAny = state.executeWorkers.remove(jedis, name);
+    if (storage && state.storageWorkers.remove(jedis, name)) {
       jedis.publish(configs.getBackplane().getWorkerChannel(), changeJson);
       return true;
     }
-    return false;
+    return removedAny;
   }
 
   @SuppressWarnings("ConstantConditions")
@@ -624,8 +678,9 @@ public class RedisShardBackplane implements Backplane {
             .setRemove(WorkerChange.Remove.newBuilder().setSource(source).setReason(reason).build())
             .build();
     String workerChangeJson = JsonFormat.printer().print(workerChange);
-    return subscriber.removeWorker(name)
-        && client.call(jedis -> removeWorkerAndPublish(jedis, name, workerChangeJson));
+    return storageWorkers.remove(name) != null
+        && client.call(
+            jedis -> removeWorkerAndPublish(jedis, name, workerChangeJson, /* storage= */ true));
   }
 
   @SuppressWarnings("ConstantConditions")
@@ -672,23 +727,57 @@ public class RedisShardBackplane implements Backplane {
     removeWorker(workerName, "Requested shutdown");
   }
 
-  @SuppressWarnings("ConstantConditions")
+  /**
+   * Returns a new set containing copies of the storage workers. Note: This method does not grant
+   * access to the shared storage set.
+   */
   @Override
-  public synchronized Set<String> getStorageWorkers() throws IOException {
-    long now = System.currentTimeMillis();
-    if (now < workerSetExpiresAt) {
-      return new HashSet<>(storageWorkerSet);
-    }
+  public Set<String> getStorageWorkers() throws IOException {
+    refreshStorageWorkersIfExpired();
+    return new HashSet<>(storageWorkers.keySet());
+  }
 
-    synchronized (storageWorkerSet) {
-      Set<String> newWorkerSet = client.call(jedis -> fetchAndExpireStorageWorkers(jedis, now));
-      storageWorkerSet.clear();
-      storageWorkerSet.addAll(newWorkerSet);
-    }
+  @Override
+  public Map<String, Long> getWorkersStartTimeInEpochSecs(Set<String> workerNames)
+      throws IOException {
+    refreshStorageWorkersIfExpired();
+    Map<String, Long> workerAndStartTime = new HashMap<>();
+    workerNames.forEach(
+        worker -> {
+          ShardWorker workerInfo = storageWorkers.get(worker);
+          if (workerInfo != null) {
+            workerAndStartTime.put(
+                worker, MILLISECONDS.toSeconds(workerInfo.getFirstRegisteredAt()));
+          }
+        });
+    return workerAndStartTime;
+  }
 
-    // fetch every 3 seconds
-    workerSetExpiresAt = now + 3000;
-    return new HashSet<>(storageWorkerSet);
+  private synchronized void refreshStorageWorkersIfExpired() throws IOException {
+    if (storageWorkersDeadline == null || storageWorkersDeadline.isExpired()) {
+      synchronized (storageWorkers) {
+        Map<String, ShardWorker> newWorkers = client.call(this::fetchAndExpireStorageWorkers);
+        storageWorkers.clear();
+        storageWorkers.putAll(newWorkers);
+      }
+      storageWorkersDeadline = Deadline.after(workerSetMaxAge, SECONDS);
+    }
+  }
+
+  @Override
+  public long getDigestInsertTime(Digest blobDigest) throws IOException {
+    return state.casWorkerMap.insertTime(client, blobDigest);
+  }
+
+  private synchronized Set<String> getExecuteWorkers() throws IOException {
+    try {
+      return recentExecuteWorkers.get();
+    } catch (RuntimeException e) {
+      // unwrap checked exception mask
+      Throwable cause = e.getCause();
+      Throwables.throwIfInstanceOf(cause, IOException.class);
+      throw e;
+    }
   }
 
   @Override
@@ -721,7 +810,8 @@ public class RedisShardBackplane implements Backplane {
         .collect(Collectors.toList());
   }
 
-  private void removeInvalidWorkers(JedisCluster jedis, long testedAt, List<ShardWorker> workers) {
+  private void removeInvalidWorkers(
+      UnifiedJedis jedis, long testedAt, List<ShardWorker> workers, boolean storage) {
     if (!workers.isEmpty()) {
       for (ShardWorker worker : workers) {
         String name = worker.getEndpoint();
@@ -736,7 +826,7 @@ public class RedisShardBackplane implements Backplane {
                 .build();
         try {
           String workerChangeJson = JsonFormat.printer().print(workerChange);
-          removeWorkerAndPublish(jedis, name, workerChangeJson);
+          removeWorkerAndPublish(jedis, name, workerChangeJson, storage);
         } catch (InvalidProtocolBufferException e) {
           log.log(Level.SEVERE, "error printing workerChange", e);
         }
@@ -744,10 +834,20 @@ public class RedisShardBackplane implements Backplane {
     }
   }
 
-  private Set<String> fetchAndExpireStorageWorkers(JedisCluster jedis, long now) {
-    Set<String> returnWorkers = Sets.newConcurrentHashSet();
+  private Map<String, ShardWorker> fetchAndExpireStorageWorkers(UnifiedJedis jedis) {
+    return fetchAndExpireWorkers(jedis, state.storageWorkers.asMap(jedis), /* storage= */ true);
+  }
+
+  private Map<String, ShardWorker> fetchAndExpireExecuteWorkers(UnifiedJedis jedis) {
+    return fetchAndExpireWorkers(jedis, state.executeWorkers.asMap(jedis), /* storage= */ false);
+  }
+
+  private Map<String, ShardWorker> fetchAndExpireWorkers(
+      UnifiedJedis jedis, Map<String, String> workers, boolean publish) {
+    long now = System.currentTimeMillis();
+    Map<String, ShardWorker> returnWorkers = Maps.newConcurrentMap();
     ImmutableList.Builder<ShardWorker> invalidWorkers = ImmutableList.builder();
-    for (Map.Entry<String, String> entry : state.storageWorkers.asMap(jedis).entrySet()) {
+    for (Map.Entry<String, String> entry : workers.entrySet()) {
       String json = entry.getValue();
       String name = entry.getKey();
       try {
@@ -760,14 +860,14 @@ public class RedisShardBackplane implements Backplane {
           if (worker.getExpireAt() <= now) {
             invalidWorkers.add(worker);
           } else {
-            returnWorkers.add(worker.getEndpoint());
+            returnWorkers.put(worker.getEndpoint(), worker);
           }
         }
       } catch (InvalidProtocolBufferException e) {
         invalidWorkers.add(ShardWorker.newBuilder().setEndpoint(name).build());
       }
     }
-    removeInvalidWorkers(jedis, now, invalidWorkers.build());
+    removeInvalidWorkers(jedis, now, invalidWorkers.build(), publish);
     return returnWorkers;
   }
 
@@ -819,7 +919,7 @@ public class RedisShardBackplane implements Backplane {
                 configs.getBackplane().getActionCacheExpire()));
   }
 
-  private void removeActionResult(JedisCluster jedis, ActionKey actionKey) {
+  private void removeActionResult(UnifiedJedis jedis, ActionKey actionKey) {
     state.actionCache.remove(jedis, asDigestStr(actionKey));
   }
 
@@ -919,7 +1019,7 @@ public class RedisShardBackplane implements Backplane {
         });
   }
 
-  private String getOperation(JedisCluster jedis, String operationName) {
+  private String getOperation(UnifiedJedis jedis, String operationName) {
     return state.operations.get(jedis, operationName);
   }
 
@@ -973,7 +1073,7 @@ public class RedisShardBackplane implements Backplane {
   }
 
   private void queue(
-      JedisCluster jedis,
+      UnifiedJedis jedis,
       String operationName,
       List<Platform.Property> provisions,
       String queueEntryJson,
@@ -1125,8 +1225,8 @@ public class RedisShardBackplane implements Backplane {
     return builder.build();
   }
 
-  private ExecuteEntry deprequeueOperation(JedisCluster jedis) throws InterruptedException {
-    String executeEntryJson = state.prequeue.dequeue(jedis);
+  private ExecuteEntry deprequeueOperation(UnifiedJedis jedis) throws InterruptedException {
+    String executeEntryJson = state.prequeue.take(jedis, dequeueService);
     if (executeEntryJson == null) {
       return null;
     }
@@ -1163,7 +1263,7 @@ public class RedisShardBackplane implements Backplane {
   }
 
   private @Nullable QueueEntry dispatchOperation(
-      JedisCluster jedis, List<Platform.Property> provisions) throws InterruptedException {
+      UnifiedJedis jedis, List<Platform.Property> provisions) throws InterruptedException {
     String queueEntryJson = state.operationQueue.dequeue(jedis, provisions);
     if (queueEntryJson == null) {
       return null;
@@ -1267,7 +1367,7 @@ public class RedisShardBackplane implements Backplane {
     return client.call(jedis -> pollOperation(jedis, operationName, json));
   }
 
-  boolean pollOperation(JedisCluster jedis, String operationName, String dispatchedOperationJson) {
+  boolean pollOperation(UnifiedJedis jedis, String operationName, String dispatchedOperationJson) {
     if (state.dispatchedOperations.exists(jedis, operationName)) {
       if (!state.dispatchedOperations.insert(jedis, operationName, dispatchedOperationJson)) {
         return true;
@@ -1290,7 +1390,7 @@ public class RedisShardBackplane implements Backplane {
     client.run(
         jedis -> {
           state.operations.insert(jedis, invocationId, operationName, operationJson);
-          state.prequeue.push(jedis, executeEntryJson, priority);
+          state.prequeue.offer(jedis, executeEntryJson, priority);
           publishReset(jedis, publishOperation);
         });
   }
@@ -1326,7 +1426,7 @@ public class RedisShardBackplane implements Backplane {
         });
   }
 
-  private void completeOperation(JedisCluster jedis, String operationName) {
+  private void completeOperation(UnifiedJedis jedis, String operationName) {
     state.dispatchedOperations.remove(jedis, operationName);
   }
 
@@ -1384,7 +1484,7 @@ public class RedisShardBackplane implements Backplane {
     return client.call(jedis -> isBlacklisted(jedis, requestMetadata));
   }
 
-  private boolean isBlacklisted(JedisCluster jedis, RequestMetadata requestMetadata) {
+  private boolean isBlacklisted(UnifiedJedis jedis, RequestMetadata requestMetadata) {
     boolean isActionBlocked =
         (!requestMetadata.getActionId().isEmpty()
             && state.blockedActions.exists(jedis, requestMetadata.getActionId()));
@@ -1409,15 +1509,19 @@ public class RedisShardBackplane implements Backplane {
   @SuppressWarnings("ConstantConditions")
   @Override
   public BackplaneStatus backplaneStatus() throws IOException {
-    BackplaneStatus.Builder builder = BackplaneStatus.newBuilder();
-    builder.addAllActiveWorkers(
-        client.call(
-            jedis ->
-                Sets.union(state.executeWorkers.keys(jedis), state.storageWorkers.keys(jedis))));
-    builder.setDispatchedSize(client.call(jedis -> state.dispatchedOperations.size(jedis)));
-    builder.setOperationQueue(state.operationQueue.status(client.call(jedis -> jedis)));
-    builder.setPrequeue(state.prequeue.status(client.call(jedis -> jedis)));
-    return builder.build();
+    Set<String> executeWorkers = getExecuteWorkers();
+    Set<String> storageWorkers = getStorageWorkers();
+    OperationQueueStatus operationQueueStatus =
+        client.call(jedis -> state.operationQueue.status(jedis));
+    QueueStatus prequeueStatus = client.call(jedis -> state.prequeue.status(jedis));
+    return BackplaneStatus.newBuilder()
+        .addAllActiveExecuteWorkers(executeWorkers)
+        .addAllActiveStorageWorkers(storageWorkers)
+        .addAllActiveWorkers(Sets.union(executeWorkers, storageWorkers))
+        .setDispatchedSize(client.call(jedis -> state.dispatchedOperations.size(jedis)))
+        .setOperationQueue(operationQueueStatus)
+        .setPrequeue(prequeueStatus)
+        .build();
   }
 
   @SuppressWarnings("ConstantConditions")
@@ -1439,5 +1543,10 @@ public class RedisShardBackplane implements Backplane {
       }
     }
     return GetClientStartTimeResult.newBuilder().addAllClientStartTime(startTimes).build();
+  }
+
+  @Override
+  public void updateDigestsExpiry(Iterable<Digest> digests) throws IOException {
+    state.casWorkerMap.setExpire(client, digests);
   }
 }

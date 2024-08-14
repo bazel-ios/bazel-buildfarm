@@ -1,11 +1,9 @@
-load("@com_github_bazelbuild_buildtools//buildifier:def.bzl", "buildifier")
-load("@io_bazel_rules_docker//java:image.bzl", "java_image")
-load("@io_bazel_rules_docker//docker/package_managers:download_pkgs.bzl", "download_pkgs")
-load("@io_bazel_rules_docker//docker/package_managers:install_pkgs.bzl", "install_pkgs")
-load("@io_bazel_rules_docker//container:container.bzl", "container_image")
-load("@rules_oss_audit//oss_audit:java/oss_audit.bzl", "oss_audit")
+load("@buildifier_prebuilt//:rules.bzl", "buildifier")
+load("@rules_oci//oci:defs.bzl", "oci_image", "oci_image_index", "oci_push", "oci_tarball")
+load("@rules_pkg//:pkg.bzl", "pkg_tar")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files")
 load("//:jvm_flags.bzl", "server_jvm_flags", "worker_jvm_flags")
-load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("//container:defs.bzl", "oci_image_env")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -20,6 +18,17 @@ buildifier(
 # For example, "debgging tools", "introspection tools", and "exeution wrappers" are examples of dependencies
 # that many need included within deployed containers.  This BUILD file creates docker images that bundle
 # additional dependencies alongside the buildfarm agents.
+ARCH = [
+    # keep sorted
+    # "aarch64", # TODO
+    "amd64",
+]
+
+DEFAULT_IMAGE_LABELS = {
+    "org.opencontainers.image.source": "https://github.com/bazelbuild/bazel-buildfarm",
+}
+
+DEFAULT_PACKAGE_DIR = "app/build_buildfarm"
 
 # == Execution Wrappers ==
 # Execution wrappers are programs that buildfarm chooses to use when running REAPI actions.  They are used for
@@ -35,53 +44,47 @@ buildifier(
 # bazel version is used in buildfarm agents as is used by bazel clients.  There has not been any known issues due
 # to version mismatch, but we state the possibility here.  Some execution wrappers will not be compatible with all
 # operating systems.  We make a best effort and ensure they all work in the below images.
-java_library(
+pkg_tar(
     name = "execution_wrappers",
-    data = [
-        ":as-nobody",
-        ":delay",
-        #":linux-sandbox.binary", # Darwin build is broken
-        ":macos-wrapper",
-        #":process-wrapper.binary", # Darwin build is broken
-        ":skip_sleep.binary",
-        ":skip_sleep.preload",
-        ":tini.binary",
+    srcs = [
+        ":exec-wrapper-files",
+        ":exec-wrapper-helpers",
     ],
+    package_dir = DEFAULT_PACKAGE_DIR,
+    tags = ["container"],
 )
 
-java_library(
+pkg_tar(
     name = "telemetry_tools",
-    data = [
+    srcs = [
         ":opentelemetry-javaagent",
     ],
+    package_dir = DEFAULT_PACKAGE_DIR,
+    tags = ["container"],
 )
 
-genrule(
-    name = "process-wrapper.binary",
-    srcs = ["@bazel//src/main/tools:process-wrapper"],
-    outs = ["process-wrapper"],
-    cmd = "cp $< $@;",
-)
-
-genrule(
-    name = "linux-sandbox.binary",
-    srcs = ["@bazel//src/main/tools:linux-sandbox"],
-    outs = ["linux-sandbox"],
-    cmd = "cp $< $@;",
-)
-
-genrule(
+pkg_files(
     name = "tini.binary",
     srcs = ["@tini//file"],
-    outs = ["tini"],
-    cmd = "cp $< $@ && chmod +x $@",
+    attributes = pkg_attributes(
+        mode = "0555",
+    ),
+    renames = {
+        "@tini//file": "tini",
+    },
+    tags = ["container"],
 )
 
-genrule(
+pkg_files(
     name = "opentelemetry-javaagent",
     srcs = ["@opentelemetry//jar"],
-    outs = ["opentelemetry-javaagent.jar"],
-    cmd = "cp $< $@;",
+    attributes = pkg_attributes(
+        mode = "0444",
+    ),
+    renames = {
+        "@opentelemetry//jar": "opentelemetry-javaagent.jar",
+    },
+    tags = ["container"],
 )
 
 cc_binary(
@@ -90,118 +93,169 @@ cc_binary(
         "//config:windows": ["as-nobody-windows.c"],
         "//conditions:default": ["as-nobody.c"],
     }),
+    tags = ["container"],
 )
 
-genrule(
-    name = "skip_sleep.binary",
-    srcs = ["@skip_sleep"],
-    outs = ["skip_sleep"],
-    cmd = "cp $< $@;",
+pkg_files(
+    name = "exec-wrapper-files",
+    srcs = [
+        ":as-nobody",
+        "@bazel//src/main/tools:linux-sandbox",
+        "@bazel//src/main/tools:process-wrapper",
+        "@skip_sleep",
+        # The delay wrapper is only intended to be used with the "skip_sleep" wrapper.
+        "delay.sh",
+        "macos-wrapper.sh",
+    ],
+    attributes = pkg_attributes(
+        mode = "0555",
+    ),
+    tags = ["container"],
 )
 
-genrule(
-    name = "skip_sleep.preload",
+pkg_files(
+    name = "exec-wrapper-helpers",
     srcs = ["@skip_sleep//:skip_sleep_preload"],
-    outs = ["skip_sleep_preload.so"],
-    cmd = "cp $< $@;",
-)
-
-# The delay wrapper is only intended to be used with the "skip_sleep" wrapper.
-sh_binary(
-    name = "delay",
-    srcs = ["delay.sh"],
-)
-
-sh_binary(
-    name = "macos-wrapper",
-    srcs = ["macos-wrapper.sh"],
-)
-
-# Docker images for buildfarm components
-java_image(
-    name = "buildfarm-server",
-    args = ["/app/build_buildfarm/examples/config.minimal.yml"],
-    base = "@amazon_corretto_java_image_base//image",
-    classpath_resources = [
-        "//src/main/java/build/buildfarm:configs",
-    ],
-    data = [
-        "//examples:example_configs",
-        "//src/main/java/build/buildfarm:configs",
-    ],
-    jvm_flags = server_jvm_flags(),
-    main_class = "build.buildfarm.server.BuildFarmServer",
+    attributes = pkg_attributes(
+        mode = "0444",
+    ),
+    prefix = DEFAULT_PACKAGE_DIR,
+    renames = {
+        "@skip_sleep//:skip_sleep_preload": "skip_sleep_preload.so",
+    },
     tags = ["container"],
-    runtime_deps = [
-        ":telemetry_tools",
-        "//src/main/java/build/buildfarm/server",
-    ],
-)
-
-oss_audit(
-    name = "buildfarm-server-audit",
-    src = "//src/main/java/build/buildfarm:buildfarm-server",
-    tags = ["audit"],
-)
-
-# A worker image may need additional packages installed that are not in the base image.
-# We use download/install rules to extend an upstream image.
-# Download cgroup-tools so that the worker is able to restrict actions via control groups.
-download_pkgs(
-    name = "worker_pkgs",
-    image_tar = "@ubuntu-bionic//image",
-    packages = ["cgroup-tools"],
-    tags = ["container"],
-)
-
-install_pkgs(
-    name = "worker_pkgs_image",
-    image_tar = "@ubuntu-bionic//image",
-    installables_tar = ":worker_pkgs.tar",
-    installation_cleanup_commands = "rm -rf /var/lib/apt/lists/*",
-    output_image_name = "worker_pkgs_image",
-    tags = ["container"],
-)
-
-# This becomes the new base image when creating worker images.
-container_image(
-    name = "worker_pkgs_image_wrapper",
-    base = ":worker_pkgs_image.tar",
-    tags = ["container"],
-)
-
-java_image(
-    name = "buildfarm-shard-worker",
-    args = ["/app/build_buildfarm/examples/config.minimal.yml"],
-    base = ":worker_pkgs_image_wrapper",
-    classpath_resources = [
-        "//src/main/java/build/buildfarm:configs",
-    ],
-    data = [
-        "//examples:example_configs",
-        "//src/main/java/build/buildfarm:configs",
-    ],
-    jvm_flags = worker_jvm_flags(),
-    main_class = "build.buildfarm.worker.shard.Worker",
-    tags = ["container"],
-    runtime_deps = [
-        ":execution_wrappers",
-        ":telemetry_tools",
-        "//src/main/java/build/buildfarm/worker/shard",
-    ],
-)
-
-oss_audit(
-    name = "buildfarm-shard-worker-audit",
-    src = "//src/main/java/build/buildfarm:buildfarm-shard-worker",
-    tags = ["audit"],
 )
 
 pkg_tar(
-    name = "buildfarm-shard-worker-tar",
-    srcs = [
-        "//examples:example_configs",
-        "//src/main/java/build/buildfarm:buildfarm-shard-worker_deploy.jar",
-        "//src/main/java/build/buildfarm:configs",
+    name = "layer_tini_amd64",
+    srcs = [":tini.binary"],
+    tags = ["container"],
+)
+
+pkg_tar(
+    name = "layer_buildfarm_server",
+    srcs = ["//src/main/java/build/buildfarm:buildfarm-server_deploy.jar"],
+    package_dir = DEFAULT_PACKAGE_DIR,
+    tags = ["container"],
+)
+
+pkg_tar(
+    name = "layer_buildfarm_worker",
+    srcs = ["//src/main/java/build/buildfarm:buildfarm-shard-worker_deploy.jar"],
+    package_dir = DEFAULT_PACKAGE_DIR,
+    tags = ["container"],
+)
+
+pkg_tar(
+    name = "layer_minimal_config",
+    srcs = ["@build_buildfarm//examples:example_configs"],
+    package_dir = DEFAULT_PACKAGE_DIR,
+    tags = ["container"],
+)
+
+pkg_tar(
+    name = "layer_logging_config",
+    srcs = ["@build_buildfarm//src/main/java/build/buildfarm:configs"],
+    package_dir = DEFAULT_PACKAGE_DIR + "/src/main/java/build/buildfarm",
+    tags = ["container"],
+)
+
+oci_image_env(
+    name = "env_server",
+    configpath = "/" + DEFAULT_PACKAGE_DIR + "/config.minimal.yml",
+    jvm_args = server_jvm_flags(),
+)
+
+oci_image(
+    name = "buildfarm-server_linux_amd64",
+    base = "@amazon_corretto_java_image_base",
+    entrypoint = [
+        "java",
+        "-jar",
+        "/" + DEFAULT_PACKAGE_DIR + "/buildfarm-server_deploy.jar",
+    ],
+    env = ":env_server",
+    labels = DEFAULT_IMAGE_LABELS,
+    tags = ["container"],
+    tars = [
+        # do not sort
+        ":layer_logging_config",
+        ":layer_minimal_config",
+        ":telemetry_tools",
+        ":layer_buildfarm_server",
     ],
 )
+
+oci_image_env(
+    name = "env_worker",
+    configpath = "/" + DEFAULT_PACKAGE_DIR + "/config.minimal.yml",
+    jvm_args = worker_jvm_flags(),
+)
+
+oci_image(
+    name = "buildfarm-worker_linux_amd64",
+    base = "@ubuntu_mantic",
+    entrypoint = [
+        # do not sort
+        "/tini",
+        "--",
+        "java",
+        "-jar",
+        "/" + DEFAULT_PACKAGE_DIR + "/buildfarm-shard-worker_deploy.jar",
+    ],
+    env = ":env_worker",
+    labels = DEFAULT_IMAGE_LABELS,
+    tags = ["container"],
+    tars = [
+        # do not sort
+        ":layer_tini_amd64",
+        ":layer_logging_config",
+        ":layer_minimal_config",
+        ":execution_wrappers",
+        ":telemetry_tools",
+        ":layer_buildfarm_worker",
+    ],
+)
+
+[
+    oci_image_index(
+        name = "buildfarm-%s" % image,
+        images = [
+            ":buildfarm-%s_linux_%s" % (image, arch)
+            for arch in ARCH
+        ],
+        tags = ["container"],
+    )
+    for image in [
+        "server",
+        "worker",
+    ]
+]
+
+######
+# Helpers to write to the local Docker Desktop's registry
+# Usage: `bazel run //:tarball_server_amd64 && docker run --rm buildfarm-server:amd64`
+######
+[
+    [
+        oci_tarball(
+            name = "tarball_%s_%s" % (image, arch),
+            image = ":buildfarm-%s_linux_%s" % (image, arch),
+            repo_tags = ["buildfarm-%s:%s" % (image, arch)],
+            tags = ["container"],
+        ),
+        # Below targets push public docker images to bazelbuild dockerhub.
+        oci_push(
+            name = "public_push_buildfarm-%s" % image,
+            image = ":buildfarm-%s" % image,
+            repository = "index.docker.io/bazelbuild/buildfarm-%s" % image,
+            # Specify the tag with `bazel run public_push_buildfarm-server public_push_buildfarm-worker -- --tag latest`
+            tags = ["container"],
+        ),
+    ]
+    for arch in ARCH
+    for image in [
+        "server",
+        "worker",
+    ]
+]

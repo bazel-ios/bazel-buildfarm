@@ -14,10 +14,11 @@
 
 package build.buildfarm.instance.shard;
 
+import build.buildfarm.common.config.BuildfarmConfigs;
 import build.buildfarm.common.redis.RedisMap;
 import java.util.Map;
 import java.util.Set;
-import redis.clients.jedis.JedisCluster;
+import redis.clients.jedis.UnifiedJedis;
 
 /**
  * @class Operations
@@ -28,6 +29,8 @@ import redis.clients.jedis.JedisCluster;
  *     information about the operations that ran.
  */
 public class Operations {
+  private static BuildfarmConfigs configs = BuildfarmConfigs.getInstance();
+
   /**
    * @field operationIds
    * @brief A mapping from operationID -> operation
@@ -54,7 +57,7 @@ public class Operations {
    * @note Overloaded.
    * @note Suggested return identifier: operation.
    */
-  public String get(JedisCluster jedis, String operationId) {
+  public String get(UnifiedJedis jedis, String operationId) {
     return operationIds.get(jedis, operationId);
   }
 
@@ -67,7 +70,7 @@ public class Operations {
    * @note Overloaded.
    * @note Suggested return identifier: operations.
    */
-  public Iterable<Map.Entry<String, String>> get(JedisCluster jedis, Iterable<String> searchIds) {
+  public Iterable<Map.Entry<String, String>> get(UnifiedJedis jedis, Iterable<String> searchIds) {
     return operationIds.get(jedis, searchIds);
   }
 
@@ -80,7 +83,7 @@ public class Operations {
    * @note Overloaded.
    * @note Suggested return identifier: operationIds.
    */
-  public Set<String> getByInvocationId(JedisCluster jedis, String invocationId) {
+  public Set<String> getByInvocationId(UnifiedJedis jedis, String invocationId) {
     return jedis.smembers(invocationId);
   }
 
@@ -93,12 +96,14 @@ public class Operations {
    * @param operation Json of the operation.
    */
   public void insert(
-      JedisCluster jedis, String invocationId, String operationId, String operation) {
+      UnifiedJedis jedis, String invocationId, String operationId, String operation) {
     operationIds.insert(jedis, operationId, operation);
 
     // We also store a mapping from invocationID -> operationIDs
     // This is a common lookup that needs to be performant.
-    jedis.sadd(invocationId, operationId);
+    if (invocationId != "" && jedis.sadd(invocationId, operationId) == 1) {
+      jedis.expire(invocationId, configs.getBackplane().getMaxInvocationIdTimeout());
+    }
   }
 
   /**
@@ -107,7 +112,7 @@ public class Operations {
    * @param jedis Jedis cluster client.
    * @param operationId The ID of the operation.
    */
-  public void remove(JedisCluster jedis, String operationId) {
+  public void remove(UnifiedJedis jedis, String operationId) {
     operationIds.remove(jedis, operationId);
   }
 }

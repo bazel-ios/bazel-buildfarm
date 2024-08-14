@@ -14,6 +14,8 @@
 
 package build.buildfarm.tools;
 
+import static build.buildfarm.common.grpc.Channels.createChannel;
+
 import build.buildfarm.common.DigestUtil;
 import build.buildfarm.common.config.BuildfarmConfigs;
 import build.buildfarm.common.config.ShardWorkerOptions;
@@ -30,10 +32,7 @@ import com.google.devtools.common.options.OptionsParser;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.Durations;
 import com.google.protobuf.util.JsonFormat;
-import io.grpc.ManagedChannel;
 import io.grpc.StatusRuntimeException;
-import io.grpc.netty.NegotiationType;
-import io.grpc.netty.NettyChannelBuilder;
 import java.io.IOException;
 import java.nio.file.Paths;
 import java.util.HashMap;
@@ -41,16 +40,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import javax.naming.ConfigurationException;
-import redis.clients.jedis.JedisCluster;
+import redis.clients.jedis.UnifiedJedis;
 
 class WorkerProfile {
   private static BuildfarmConfigs configs = BuildfarmConfigs.getInstance();
-
-  private static ManagedChannel createChannel(String target) {
-    NettyChannelBuilder builder =
-        NettyChannelBuilder.forTarget(target).negotiationType(NegotiationType.PLAINTEXT);
-    return builder.build();
-  }
 
   /**
    * Transform worker string from "ip-10-135-31-210.ec2:8981" to "10.135.31.210".
@@ -116,11 +109,11 @@ class WorkerProfile {
     } catch (IOException e) {
       System.out.println("Could not parse yml configuration file." + e);
     }
-    RedisClient client = new RedisClient(JedisClusterFactory.create().get());
+    RedisClient client = new RedisClient(JedisClusterFactory.create("worker-profile").get());
     return client.call(jedis -> fetchWorkers(jedis, System.currentTimeMillis()));
   }
 
-  private static Set<String> fetchWorkers(JedisCluster jedis, long now) {
+  private static Set<String> fetchWorkers(UnifiedJedis jedis, long now) {
     Set<String> workers = Sets.newConcurrentHashSet();
     for (Map.Entry<String, String> entry :
         jedis.hgetAll(configs.getBackplane().getWorkersHashName() + "_storage").entrySet()) {
@@ -161,7 +154,8 @@ class WorkerProfile {
       }
       if (workers == null || workers.isEmpty()) {
         System.out.println(
-            "cannot find any workers, check the redis url and make sure there are workers in the cluster");
+            "cannot find any workers, check the redis url and make sure there are workers in the"
+                + " cluster");
       } else {
         // remove the unregistered workers
         for (String existingWorker : workersToChannels.keySet()) {

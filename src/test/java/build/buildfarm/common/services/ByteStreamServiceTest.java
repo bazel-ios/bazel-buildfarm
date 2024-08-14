@@ -164,7 +164,7 @@ public class ByteStreamServiceTest {
     HashCode hash = HashCode.fromString(digest.getHash());
     String resourceName =
         ByteStreamUploader.uploadResourceName(
-            /* instanceName=*/ null, uuid, hash, digest.getSizeBytes());
+            /* instanceName= */ null, uuid, hash, digest.getSizeBytes());
 
     Channel channel = InProcessChannelBuilder.forName(fakeServerName).directExecutor().build();
     ByteStreamStub service = ByteStreamGrpc.newStub(channel);
@@ -178,6 +178,7 @@ public class ByteStreamServiceTest {
             .setResourceName(resourceName)
             .setData(shortContent)
             .build());
+    verify(write, times(1)).reset();
     requestObserver.onNext(
         WriteRequest.newBuilder().setWriteOffset(0).setData(content).setFinishWrite(true).build());
     assertThat(futureResponder.get())
@@ -186,7 +187,7 @@ public class ByteStreamServiceTest {
     verify(write, atLeastOnce()).getCommittedSize();
     verify(write, atLeastOnce())
         .getOutput(any(Long.class), any(TimeUnit.class), any(Runnable.class));
-    verify(write, times(1)).reset();
+    verify(write, times(2)).reset();
     verify(write, times(1)).getFuture();
   }
 
@@ -240,7 +241,7 @@ public class ByteStreamServiceTest {
     HashCode hash = HashCode.fromString(digest.getHash());
     String resourceName =
         ByteStreamUploader.uploadResourceName(
-            /* instanceName=*/ null, uuid, hash, digest.getSizeBytes());
+            /* instanceName= */ null, uuid, hash, digest.getSizeBytes());
 
     Channel channel = InProcessChannelBuilder.forName(fakeServerName).directExecutor().build();
     ByteStreamStub service = ByteStreamGrpc.newStub(channel);

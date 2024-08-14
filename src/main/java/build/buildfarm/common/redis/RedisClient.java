@@ -24,6 +24,8 @@ import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import redis.clients.jedis.UnifiedJedis;
+import redis.clients.jedis.exceptions.JedisClusterOperationException;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import lombok.extern.java.Log;
@@ -31,7 +33,6 @@ import redis.clients.jedis.JedisCluster;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 import redis.clients.jedis.exceptions.JedisDataException;
 import redis.clients.jedis.exceptions.JedisException;
-import redis.clients.jedis.exceptions.JedisNoReachableClusterNodeException;
 
 /**
  * @class RedisClient
@@ -57,12 +58,12 @@ public class RedisClient implements Closeable {
 
   @FunctionalInterface
   public interface JedisContext<T> {
-    T run(JedisCluster jedis) throws JedisException;
+    T run(UnifiedJedis jedis) throws JedisException;
   }
 
   @FunctionalInterface
   public interface JedisInterruptibleContext<T> {
-    T run(JedisCluster jedis) throws InterruptedException, JedisException;
+    T run(UnifiedJedis jedis) throws InterruptedException, JedisException;
   }
 
   private static class JedisMisconfigurationException extends JedisDataException {
@@ -80,27 +81,26 @@ public class RedisClient implements Closeable {
   }
 
   // We store the factory in case we want to re-create the jedis client.
-  private Supplier<JedisCluster> jedisClusterFactory;
+  private Supplier<UnifiedJedis> unifiedJedisFactory;
 
-  // The jedis client.
-  private JedisCluster jedis;
+  private UnifiedJedis jedis;
 
   private boolean closed = false;
 
-  public RedisClient(JedisCluster jedis) {
+  public RedisClient(UnifiedJedis jedis) {
     this.jedis = jedis;
   }
 
   public RedisClient(
-      Supplier<JedisCluster> jedisClusterFactory,
+      Supplier<UnifiedJedis> unifiedJedisFactory,
       int reconnectClientAttempts,
       int reconnectClientWaitDurationMs) {
     try {
-      this.jedis = jedisClusterFactory.get();
+      this.jedis = unifiedJedisFactory.get();
     } catch (Exception e) {
       log.log(Level.SEVERE, "Unable to establish redis client: " + e.toString());
     }
-    this.jedisClusterFactory = jedisClusterFactory;
+    this.unifiedJedisFactory = unifiedJedisFactory;
     this.reconnectClientAttempts = reconnectClientAttempts;
     this.reconnectClientWaitDurationMs = reconnectClientWaitDurationMs;
   }
@@ -121,7 +121,7 @@ public class RedisClient implements Closeable {
     }
   }
 
-  public void run(Consumer<JedisCluster> withJedis) throws IOException {
+  public void run(Consumer<UnifiedJedis> withJedis) throws IOException {
     call(
         (JedisContext<Void>)
             jedis -> {
@@ -197,7 +197,7 @@ public class RedisClient implements Closeable {
   private void rebuildJedisCluser() {
     try {
       log.log(Level.SEVERE, "Rebuilding redis client");
-      jedis = jedisClusterFactory.get();
+      jedis = unifiedJedisFactory.get();
     } catch (Exception e) {
       redisClientRebuildErrorCounter.inc();
       log.log(Level.SEVERE, "Failed to rebuild redis client");
@@ -216,7 +216,7 @@ public class RedisClient implements Closeable {
         }
         throw e;
       }
-    } catch (JedisMisconfigurationException | JedisNoReachableClusterNodeException e) {
+    } catch (JedisMisconfigurationException | JedisClusterOperationException e) {
       // In regards to a Jedis misconfiguration,
       // the backplane is configured not to accept writes currently
       // as a result of an error. The error is meant to indicate

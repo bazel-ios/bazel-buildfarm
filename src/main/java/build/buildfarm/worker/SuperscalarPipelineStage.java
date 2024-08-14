@@ -14,16 +14,20 @@
 
 package build.buildfarm.worker;
 
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
-abstract class SuperscalarPipelineStage extends PipelineStage {
+public abstract class SuperscalarPipelineStage extends PipelineStage {
   protected final int width;
 
   @SuppressWarnings("rawtypes")
   protected final BlockingQueue claims;
+
+  protected Set<String> operationNames = new HashSet<>();
 
   private volatile boolean catastrophic = false;
 
@@ -46,6 +50,39 @@ abstract class SuperscalarPipelineStage extends PipelineStage {
 
   protected abstract int claimsRequired(OperationContext operationContext);
 
+  @Override
+  public String getOperationName() {
+    throw new UnsupportedOperationException("use getOperationNames on superscalar stages");
+  }
+
+  public int getWidth() {
+    return width;
+  }
+
+  public abstract int getSlotUsage();
+
+  public Iterable<String> getOperationNames() {
+    synchronized (operationNames) {
+      return new HashSet<String>(operationNames);
+    }
+  }
+
+  @Override
+  protected void start(String operationName, String message) {
+    synchronized (operationNames) {
+      operationNames.add(operationName);
+    }
+    super.start(operationName, message);
+  }
+
+  @Override
+  protected void complete(String operationName, long usecs, long stallUSecs, String status) {
+    super.complete(operationName, usecs, stallUSecs, status);
+    synchronized (operationNames) {
+      operationNames.remove(operationName);
+    }
+  }
+
   synchronized void waitForReleaseOrCatastrophe(BlockingQueue<OperationContext> queue) {
     boolean interrupted = false;
     while (!catastrophic && isClaimed()) {
@@ -58,7 +95,7 @@ abstract class SuperscalarPipelineStage extends PipelineStage {
         releaseClaim(operationContext.operation.getName(), claimsRequired(operationContext));
       } else {
         try {
-          wait(/* timeout=*/ 10);
+          wait(/* timeout= */ 10);
         } catch (InterruptedException e) {
           interrupted = Thread.interrupted() || interrupted;
           // ignore, we will throw it eventually

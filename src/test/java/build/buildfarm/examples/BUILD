@@ -8,9 +8,8 @@ java_test(
         "//src/main/java/build/buildfarm/common/config",
         "//src/main/protobuf:build_buildfarm_v1test_buildfarm_java_proto",
         "//src/test/java/build/buildfarm:test_runner",
-        "//third_party/jedis",
-        "@googleapis//:google_bytestream_bytestream_java_proto",
-        "@googleapis//:google_rpc_error_details_java_proto",
+        "@com_google_googleapis//google/bytestream:bytestream_java_proto",
+        "@com_google_googleapis//google/rpc:rpc_java_proto",
         "@maven//:com_google_guava_guava",
         "@maven//:com_google_jimfs_jimfs",
         "@maven//:com_google_protobuf_protobuf_java",
@@ -21,5 +20,6 @@ java_test(
         "@maven//:io_grpc_grpc_stub",
         "@maven//:io_grpc_grpc_testing",
         "@maven//:org_mockito_mockito_core",
+        "@maven//:redis_clients_jedis",
     ],
 )

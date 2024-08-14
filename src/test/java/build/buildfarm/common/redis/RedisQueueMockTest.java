@@ -14,355 +14,146 @@
 
 package build.buildfarm.common.redis;
 
-import static com.google.common.truth.Truth.assertThat;
-import static org.mockito.Mockito.any;
+import static com.google.common.collect.Iterables.partition;
+import static com.google.common.collect.Lists.newArrayList;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static redis.clients.jedis.args.ListDirection.LEFT;
+import static redis.clients.jedis.args.ListDirection.RIGHT;
 
 import build.buildfarm.common.StringVisitor;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import com.google.common.collect.ImmutableList;
+import java.time.Duration;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import redis.clients.jedis.JedisCluster;
+import redis.clients.jedis.Jedis;
 
-/**
- * @class RedisQueueMockTest
- * @brief tests A redis queue.
- * @details A redis queue is an implementation of a queue data structure which internally uses redis
- *     to store and distribute the data. Its important to know that the lifetime of the queue
- *     persists before and after the queue data structure is created (since it exists in redis).
- *     Therefore, two redis queues with the same name, would in fact be the same underlying redis
- *     queue.
- */
 @RunWith(JUnit4.class)
 public class RedisQueueMockTest {
-  @Mock private JedisCluster redis;
+  @Mock private Jedis redis;
 
   @Before
   public void setUp() {
     MockitoAnnotations.initMocks(this);
   }
 
-  // Function under test: redisQueue
-  // Reason for testing: the queue can be constructed with a valid cluster instance and name
-  // Failure explanation: the queue is throwing an exception upon construction
   @Test
-  public void redisQueueConstructsWithoutError() throws Exception {
-    // ACT
-    new RedisQueue("test");
+  public void decorateSucceeds() {
+    RedisQueue.decorate(redis, "test");
   }
 
-  // Function under test: push
-  // Reason for testing: the queue can have a value pushed onto it
-  // Failure explanation: the queue is throwing an exception upon push
   @Test
-  public void pushPushWithoutError() throws Exception {
-    // ARRANGE
-    RedisQueue queue = new RedisQueue("test");
+  public void offerShouldLPush() {
+    RedisQueue queue = new RedisQueue(redis, "test");
 
-    // ACT
-    queue.push(redis, "foo");
+    queue.offer("foo");
 
-    // ASSERT
     verify(redis, times(1)).lpush("test", "foo");
   }
 
-  // Function under test: push
-  // Reason for testing: the queue can have the different values pushed onto it
-  // Failure explanation: the queue is throwing an exception upon pushing different values
   @Test
-  public void pushPushDifferentWithoutError() throws Exception {
-    // ARRANGE
-    RedisQueue queue = new RedisQueue("test");
+  public void removeFromDequeueShouldLRemTail() {
+    RedisQueue queue = new RedisQueue(redis, "test");
 
-    // ACT
-    queue.push(redis, "foo");
-    queue.push(redis, "bar");
+    queue.removeFromDequeue("foo");
 
-    // ASSERT
-    verify(redis, times(1)).lpush("test", "foo");
-    verify(redis, times(1)).lpush("test", "bar");
+    verify(redis, times(1)).lrem(queue.getDequeueName(), -1, "foo");
   }
 
-  // Function under test: push
-  // Reason for testing: the queue can have the same values pushed onto it
-  // Failure explanation: the queue is throwing an exception upon pushing the same values
   @Test
-  public void pushPushSameWithoutError() throws Exception {
-    // ARRANGE
-    RedisQueue queue = new RedisQueue("test");
+  public void removeAllShouldLRemAll() {
+    RedisQueue queue = new RedisQueue(redis, "test");
 
-    // ACT
-    queue.push(redis, "foo");
-    queue.push(redis, "foo");
+    queue.removeAll("foo");
 
-    // ASSERT
-    verify(redis, times(2)).lpush("test", "foo");
+    verify(redis, times(1)).lrem("test", 0, "foo");
   }
 
-  // Function under test: push
-  // Reason for testing: the queue can have many values pushed into it
-  // Failure explanation: the queue is throwing an exception upon pushing many values
   @Test
-  public void pushPushMany() throws Exception {
-    // ARRANGE
-    RedisQueue queue = new RedisQueue("test");
+  public void takeShouldBLMove() {
+    RedisQueue queue = new RedisQueue(redis, "test");
 
-    // ACT
-    for (int i = 0; i < 1000; ++i) {
-      queue.push(redis, "foo" + i);
+    queue.take(Duration.ofMillis(1470));
+
+    verify(redis, times(1)).blmove("test", queue.getDequeueName(), RIGHT, LEFT, 1.47);
+  }
+
+  @Test
+  public void pollShouldLMove() {
+    RedisQueue queue = new RedisQueue(redis, "test");
+
+    queue.poll();
+
+    verify(redis, times(1)).lmove("test", queue.getDequeueName(), RIGHT, LEFT);
+  }
+
+  @Test
+  public void sizeShouldLLen() {
+    RedisQueue queue = new RedisQueue(redis, "test");
+
+    queue.size();
+
+    verify(redis, times(1)).llen("test");
+  }
+
+  private void arrangeVisitLRange(String name, int listPageSize, Iterable<String> entries) {
+    int index = 0;
+    int nextIndex = listPageSize;
+    for (Iterable<String> page : partition(entries, listPageSize)) {
+      when(redis.lrange(name, index, nextIndex - 1)).thenReturn(newArrayList(page));
+      index = nextIndex;
+      nextIndex += listPageSize;
     }
+  }
 
-    // ASSERT
-    for (int i = 0; i < 1000; ++i) {
-      verify(redis, times(1)).lpush("test", "foo" + i);
+  private void verifyVisitLRange(
+      String name, StringVisitor visitor, int listPageSize, Iterable<String> entries) {
+    int pageCount = listPageSize;
+    int index = 0;
+    int nextIndex = listPageSize;
+    for (String entry : entries) {
+      verify(visitor, times(1)).visit(entry);
+      if (--pageCount == 0) {
+        verify(redis, times(1)).lrange(name, index, nextIndex - 1);
+        index = nextIndex;
+        nextIndex += listPageSize;
+        pageCount = listPageSize;
+      }
+    }
+    if (pageCount != 0) {
+      verify(redis, times(1)).lrange(name, index, nextIndex - 1);
     }
   }
 
-  // Function under test: push
-  // Reason for testing: the queue size increases as elements are pushed
-  // Failure explanation: the queue size is not accurately reflecting the pushes
+  private final Iterable<String> VISIT_ENTRIES = ImmutableList.of("one", "two", "three", "four");
+
   @Test
-  public void pushCallsLPush() throws Exception {
-    // ARRANGE
-    RedisQueue queue = new RedisQueue("test");
+  public void visitShouldLRange() {
+    int listPageSize = 3;
+    RedisQueue queue = new RedisQueue(redis, "test", listPageSize);
+    arrangeVisitLRange("test", listPageSize, VISIT_ENTRIES);
+    StringVisitor visitor = mock(StringVisitor.class);
 
-    // ACT
-    queue.push(redis, "foo");
-    queue.push(redis, "foo");
-    queue.push(redis, "foo");
-    queue.push(redis, "foo");
-    queue.push(redis, "foo");
-    queue.push(redis, "foo");
-    queue.push(redis, "foo");
-    queue.push(redis, "foo");
-    queue.push(redis, "foo");
-    queue.push(redis, "foo");
+    queue.visit(visitor);
 
-    // ASSERT
-    verify(redis, times(10)).lpush("test", "foo");
+    verifyVisitLRange("test", visitor, listPageSize, VISIT_ENTRIES);
   }
 
-  // Function under test: removeFromDequeue
-  // Reason for testing: we can remove an element from the dequeue
-  // Failure explanation: we are either unable to get an element into the dequeue or unable to
-  // remove it
   @Test
-  public void removeFromDequeueRemoveADequeueValue() throws Exception {
-    // ARRANGE
-    when(redis.lrem("test_dequeue", -1, "foo")).thenReturn(1L);
-    RedisQueue queue = new RedisQueue("test");
+  public void visitDequeueShouldLRange() {
+    int listPageSize = 3;
+    RedisQueue queue = new RedisQueue(redis, "test", listPageSize);
+    arrangeVisitLRange(queue.getDequeueName(), listPageSize, VISIT_ENTRIES);
+    StringVisitor visitor = mock(StringVisitor.class);
 
-    // ACT
-    boolean wasRemoved = queue.removeFromDequeue(redis, "foo");
+    queue.visitDequeue(visitor);
 
-    // ASSERT
-    assertThat(wasRemoved).isTrue();
-    verify(redis, times(1)).lrem("test_dequeue", -1, "foo");
-  }
-
-  // Function under test: dequeue
-  // Reason for testing: the element is able to be dequeued
-  // Failure explanation: something prevented the element from being dequeued
-  @Test
-  public void dequeueElementCanBeDequeuedWithTimeout() throws Exception {
-    // ARRANGE
-    when(redis.brpoplpush("test", "test_dequeue", 1)).thenReturn("foo");
-    RedisQueue queue = new RedisQueue("test");
-
-    // ACT
-    queue.push(redis, "foo");
-    String val = queue.dequeue(redis, 1);
-
-    // ASSERT
-    assertThat(val).isEqualTo("foo");
-  }
-
-  // Function under test: dequeue
-  // Reason for testing: element is not dequeued
-  // Failure explanation: element was dequeued
-  @Test
-  public void dequeueElementIsNotDequeuedIfTimeRunsOut() throws Exception {
-    // ARRANGE
-    when(redis.brpoplpush("test", "test_dequeue", 1)).thenReturn(null);
-    RedisQueue queue = new RedisQueue("test");
-
-    // ACT
-    queue.push(redis, "foo");
-    String val = queue.dequeue(redis, 5);
-
-    // ASSERT
-    assertThat(val).isEqualTo(null);
-  }
-
-  // Function under test: dequeue
-  // Reason for testing: the dequeue is interrupted
-  // Failure explanation: the dequeue was not interrupted as expected
-  @Test
-  public void dequeueInterrupt() throws Exception {
-    // ARRANGE
-    when(redis.brpoplpush("test", "test_dequeue", 1)).thenReturn(null);
-    RedisQueue queue = new RedisQueue("test");
-
-    // ACT
-    queue.push(redis, "foo");
-    Thread call =
-        new Thread(
-            () -> {
-              try {
-                queue.dequeue(redis, 100000);
-              } catch (Exception e) {
-              }
-            });
-    call.start();
-    call.interrupt();
-  }
-
-  // Function under test: nonBlockingDequeue
-  // Reason for testing: the element is able to be dequeued
-  // Failure explanation: something prevented the element from being dequeued
-  @Test
-  public void nonBlockingDequeueElementCanBeDequeued() throws Exception {
-    // ARRANGE
-    when(redis.rpoplpush("test", "test_dequeue")).thenReturn("foo");
-    RedisQueue queue = new RedisQueue("test");
-
-    // ACT
-    queue.push(redis, "foo");
-    String val = queue.nonBlockingDequeue(redis);
-
-    // ASSERT
-    assertThat(val).isEqualTo("foo");
-  }
-
-  // Function under test: getName
-  // Reason for testing: the name can be received
-  // Failure explanation: name does not match what it should
-  @Test
-  public void getNameNameIsStored() throws Exception {
-    // ARRANGE
-    RedisQueue queue = new RedisQueue("queue_name");
-
-    // ACT
-    String name = queue.getName();
-
-    // ASSERT
-    assertThat(name).isEqualTo("queue_name");
-  }
-
-  // Function under test: getDequeueName
-  // Reason for testing: the name can be received
-  // Failure explanation: name does not match what it should
-  @Test
-  public void getDequeueNameNameIsStored() throws Exception {
-    // ARRANGE
-    RedisQueue queue = new RedisQueue("queue_name");
-
-    // ACT
-    String name = queue.getDequeueName();
-
-    // ASSERT
-    assertThat(name).isEqualTo("queue_name_dequeue");
-  }
-
-  // Function under test: visit
-  // Reason for testing: each element in the queue can be visited
-  // Failure explanation: we are unable to visit each element in the queue
-  @Test
-  public void visitCheckVisitOfEachElement() throws Exception {
-    // MOCK
-    when(redis.lrange(any(String.class), any(Long.class), any(Long.class)))
-        .thenReturn(
-            Arrays.asList(
-                "element 1",
-                "element 2",
-                "element 3",
-                "element 4",
-                "element 5",
-                "element 6",
-                "element 7",
-                "element 8"));
-
-    // ARRANGE
-    RedisQueue queue = new RedisQueue("test");
-    queue.push(redis, "element 1");
-    queue.push(redis, "element 2");
-    queue.push(redis, "element 3");
-    queue.push(redis, "element 4");
-    queue.push(redis, "element 5");
-    queue.push(redis, "element 6");
-    queue.push(redis, "element 7");
-    queue.push(redis, "element 8");
-
-    // ACT
-    List<String> visited = new ArrayList<>();
-    StringVisitor visitor =
-        new StringVisitor() {
-          public void visit(String entry) {
-            visited.add(entry);
-          }
-        };
-    queue.visit(redis, visitor);
-
-    // ASSERT
-    assertThat(visited.size()).isEqualTo(8);
-    assertThat(visited.contains("element 1")).isTrue();
-    assertThat(visited.contains("element 2")).isTrue();
-    assertThat(visited.contains("element 3")).isTrue();
-    assertThat(visited.contains("element 4")).isTrue();
-    assertThat(visited.contains("element 5")).isTrue();
-    assertThat(visited.contains("element 6")).isTrue();
-    assertThat(visited.contains("element 7")).isTrue();
-    assertThat(visited.contains("element 8")).isTrue();
-  }
-
-  // Function under test: visitDequeue
-  // Reason for testing: each element in the queue can be visited
-  // Failure explanation: we are unable to visit each element in the queue
-  @Test
-  public void visitDequeueCheckVisitOfEachElement() throws Exception {
-    // MOCK
-    when(redis.lrange(any(String.class), any(Long.class), any(Long.class)))
-        .thenReturn(
-            Arrays.asList(
-                "element 1",
-                "element 2",
-                "element 3",
-                "element 4",
-                "element 5",
-                "element 6",
-                "element 7",
-                "element 8"));
-
-    // ARRANGE
-    RedisQueue queue = new RedisQueue("test");
-
-    // ACT
-    List<String> visited = new ArrayList<>();
-    StringVisitor visitor =
-        new StringVisitor() {
-          public void visit(String entry) {
-            visited.add(entry);
-          }
-        };
-    queue.visitDequeue(redis, visitor);
-
-    // ASSERT
-    assertThat(visited.size()).isEqualTo(8);
-    assertThat(visited.contains("element 1")).isTrue();
-    assertThat(visited.contains("element 2")).isTrue();
-    assertThat(visited.contains("element 3")).isTrue();
-    assertThat(visited.contains("element 4")).isTrue();
-    assertThat(visited.contains("element 5")).isTrue();
-    assertThat(visited.contains("element 6")).isTrue();
-    assertThat(visited.contains("element 7")).isTrue();
-    assertThat(visited.contains("element 8")).isTrue();
+    verifyVisitLRange(queue.getDequeueName(), visitor, listPageSize, VISIT_ENTRIES);
   }
 }

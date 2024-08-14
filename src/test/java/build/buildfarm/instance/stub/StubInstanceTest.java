@@ -20,7 +20,8 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import build.bazel.remote.execution.v2.Action;
 import build.bazel.remote.execution.v2.ActionCacheGrpc.ActionCacheImplBase;
@@ -64,6 +65,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -98,7 +100,7 @@ public class StubInstanceTest {
     fakeServer.awaitTermination();
   }
 
-  private Instance newStubInstance(String instanceName) {
+  private StubInstance newStubInstance(String instanceName) {
     return new StubInstance(
         instanceName,
         DIGEST_UTIL,
@@ -110,7 +112,7 @@ public class StubInstanceTest {
     String test1Name = "test1";
     ByteString test1Blob = ByteString.copyFromUtf8(test1Name);
     DigestUtil test1DigestUtil = new DigestUtil(DigestUtil.HashFunction.SHA256);
-    Instance test1Instance = new StubInstance(test1Name, test1DigestUtil, /* channel=*/ null);
+    Instance test1Instance = new StubInstance(test1Name, test1DigestUtil, /* channel= */ null);
     assertThat(test1Instance.getName()).isEqualTo(test1Name);
     assertThat(test1Instance.getDigestUtil().compute(test1Blob))
         .isEqualTo(test1DigestUtil.compute(test1Blob));
@@ -119,7 +121,7 @@ public class StubInstanceTest {
     String test2Name = "test2";
     ByteString test2Blob = ByteString.copyFromUtf8(test2Name);
     DigestUtil test2DigestUtil = new DigestUtil(DigestUtil.HashFunction.MD5);
-    Instance test2Instance = new StubInstance(test2Name, test2DigestUtil, /* channel=*/ null);
+    Instance test2Instance = new StubInstance(test2Name, test2DigestUtil, /* channel= */ null);
     assertThat(test2Instance.getName()).isEqualTo(test2Name);
     assertThat(test2Instance.getDigestUtil().compute(test2Blob))
         .isEqualTo(test2DigestUtil.compute(test2Blob));
@@ -194,6 +196,38 @@ public class StubInstanceTest {
         ImmutableList.of(Digest.newBuilder().setHash("present").setSizeBytes(1).build());
     assertThat(instance.findMissingBlobs(digests, RequestMetadata.getDefaultInstance()).get())
         .isEmpty();
+    instance.stop();
+  }
+
+  @Test
+  public void findMissingBlobsOverSizeLimitRecombines()
+      throws ExecutionException, InterruptedException {
+    AtomicReference<FindMissingBlobsRequest> reference = new AtomicReference<>();
+    serviceRegistry.addService(
+        new ContentAddressableStorageImplBase() {
+          @Override
+          public void findMissingBlobs(
+              FindMissingBlobsRequest request,
+              StreamObserver<FindMissingBlobsResponse> responseObserver) {
+            reference.set(request);
+            responseObserver.onNext(
+                FindMissingBlobsResponse.newBuilder()
+                    .addAllMissingBlobDigests(request.getBlobDigestsList())
+                    .build());
+            responseObserver.onCompleted();
+          }
+        });
+    StubInstance instance = newStubInstance("findMissingBlobs-test");
+    instance.maxRequestSize = 1024;
+    ImmutableList.Builder<Digest> builder = ImmutableList.builder();
+    // generates digest size * 1024 serialized size at least
+    for (int i = 0; i < 1024; i++) {
+      ByteString content = ByteString.copyFromUtf8("Hello, World! " + UUID.randomUUID());
+      builder.add(DIGEST_UTIL.compute(content));
+    }
+    ImmutableList<Digest> digests = builder.build();
+    assertThat(instance.findMissingBlobs(digests, RequestMetadata.getDefaultInstance()).get())
+        .containsExactlyElementsIn(digests);
     instance.stop();
   }
 
@@ -287,7 +321,7 @@ public class StubInstanceTest {
     ImmutableList<Digest> digests =
         ImmutableList.of(DIGEST_UTIL.compute(first), DIGEST_UTIL.compute(last));
     assertThat(instance.putAllBlobs(blobs, RequestMetadata.getDefaultInstance()))
-        .containsAllIn(digests);
+        .containsAtLeastElementsIn(digests);
   }
 
   @Test
@@ -386,7 +420,7 @@ public class StubInstanceTest {
     assertThat(ioException).isNotNull();
     Status status = Status.fromThrowable(ioException);
     assertThat(status.getCode()).isEqualTo(Code.UNAVAILABLE);
-    verifyZeroInteractions(out);
+    verifyNoInteractions(out);
     instance.stop();
   }
 
@@ -458,7 +492,7 @@ public class StubInstanceTest {
     assertThat(ioException).isNotNull();
     Status status = Status.fromThrowable(ioException);
     assertThat(status.getCode()).isEqualTo(Code.DEADLINE_EXCEEDED);
-    verifyZeroInteractions(out);
+    verifyNoInteractions(out);
     instance.stop();
   }
 
@@ -477,7 +511,7 @@ public class StubInstanceTest {
     verify(mockBlobObserver, times(1)).setOnReadyHandler(onReadyCaptor.capture());
     // call it
     onReadyCaptor.getValue().run();
-    // verify zero interactions with mockRequestStream
-    verifyZeroInteractions(mockRequestStream);
+    // verify no more interactions with mockRequestStream
+    verifyNoMoreInteractions(mockRequestStream);
   }
 }

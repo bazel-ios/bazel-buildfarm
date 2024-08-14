@@ -66,7 +66,7 @@ class LocalCasWriter implements CasWriter {
     Write write = getLocalWrite(digest);
 
     try (OutputStream out =
-            write.getOutput(/* deadlineAfter=*/ 1, /* deadlineAfterUnits=*/ DAYS, () -> {});
+            write.getOutput(/* deadlineAfter= */ 1, /* deadlineAfterUnits= */ DAYS, () -> {});
         InputStream in = suppliedStream.get()) {
       ByteStreams.copy(in, out);
     } catch (IOException e) {
