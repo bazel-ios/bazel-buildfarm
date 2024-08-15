@@ -97,11 +97,6 @@ import java.util.logging.Level;
 import javax.annotation.Nullable;
 import javax.naming.ConfigurationException;
 import lombok.extern.java.Log;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.ApplicationContext;
-import org.springframework.context.annotation.ComponentScan;
 
 @Log
 public final class Worker extends LoggingMain {
@@ -146,7 +141,6 @@ public final class Worker extends LoggingMain {
   private LoadingCache<String, Instance> workerStubs;
   private AtomicBoolean released = new AtomicBoolean(true);
 
-  @Autowired private ApplicationContext springContext;
   /**
    * The method will prepare the worker for graceful shutdown when the worker is ready. Note on
    * using stderr here instead of log. By the time this is called in PreDestroy, the log is no
@@ -227,10 +221,9 @@ public final class Worker extends LoggingMain {
 
     // Consider defining exit codes to better afford out of band instance
     // recovery
-    int code = SpringApplication.exit(springContext, () -> 1);
     termFuture.cancel(false);
     shutdownDeadlineExecutor.shutdown();
-    System.exit(code);
+    System.exit(0);
   }
 
   private Operation stripOperation(Operation operation) {
