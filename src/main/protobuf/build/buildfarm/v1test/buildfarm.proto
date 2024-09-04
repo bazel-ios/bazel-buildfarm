@@ -274,10 +274,16 @@ message ShardWorker {
   int64 expire_at = 2;
 
   int32 worker_type = 3;
+
+  int64 first_registered_at = 4;
 }
 
 message WorkerChange {
-  message Add {}
+  message Add {
+    google.protobuf.Timestamp effectiveAt = 1;
+
+    int32 worker_type = 2;
+  }
 
   message Remove {
     string source = 1;

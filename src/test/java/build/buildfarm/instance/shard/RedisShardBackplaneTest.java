@@ -16,6 +16,7 @@ package build.buildfarm.instance.shard;
 
 import static build.buildfarm.instance.shard.RedisShardBackplane.parseOperationChange;
 import static com.google.common.truth.Truth.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
@@ -23,6 +24,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import build.bazel.remote.execution.v2.Digest;
 import build.bazel.remote.execution.v2.Platform;
 import build.bazel.remote.execution.v2.RequestMetadata;
 import build.buildfarm.common.config.BuildfarmConfigs;
@@ -31,13 +33,18 @@ import build.buildfarm.v1test.DispatchedOperation;
 import build.buildfarm.v1test.ExecuteEntry;
 import build.buildfarm.v1test.OperationChange;
 import build.buildfarm.v1test.QueueEntry;
+import build.buildfarm.v1test.ShardWorker;
 import build.buildfarm.v1test.WorkerChange;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.longrunning.Operation;
 import com.google.protobuf.util.JsonFormat;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 import org.junit.Before;
@@ -349,5 +356,76 @@ public class RedisShardBackplaneTest {
 
     verify(mockJedisClusterFactory, times(1)).get();
     verify(jedisCluster, times(1)).exists(invocationBlacklistKey);
+  }
+
+  @Test
+  public void testGetWorkersStartTime() throws IOException {
+    JedisCluster jedisCluster = mock(JedisCluster.class);
+    when(mockJedisClusterFactory.get()).thenReturn(jedisCluster);
+    backplane =
+        new RedisShardBackplane("workers-starttime-test", o -> o, o -> o, mockJedisClusterFactory);
+    backplane.start("startTime/test:0000");
+
+    Set<String> workerNames = ImmutableSet.of("worker1", "worker2", "missing_worker");
+
+    String storageWorkerKey = configs.getBackplane().getWorkersHashName() + "_storage";
+    Map<String, String> workersJson =
+        Map.of(
+            "worker1",
+                "{\"endpoint\": \"worker1\", \"expireAt\": \"9999999999999\", \"workerType\": 3, \"firstRegisteredAt\": \"1685292624000\"}",
+            "worker2",
+                "{\"endpoint\": \"worker2\", \"expireAt\": \"9999999999999\", \"workerType\": 3, \"firstRegisteredAt\": \"1685282624000\"}");
+    when(jedisCluster.hgetAll(storageWorkerKey)).thenReturn(workersJson);
+    Map<String, Long> workersStartTime = backplane.getWorkersStartTimeInEpochSecs(workerNames);
+    assertThat(workersStartTime.size()).isEqualTo(2);
+    assertThat(workersStartTime.get("worker1")).isEqualTo(1685292624L);
+    assertThat(workersStartTime.get("worker2")).isEqualTo(1685282624L);
+    assertThat(workersStartTime.get("missing_worker")).isNull();
+  }
+
+  @Test
+  public void getDigestInsertTime() throws IOException {
+    JedisCluster jedisCluster = mock(JedisCluster.class);
+    when(mockJedisClusterFactory.get()).thenReturn(jedisCluster);
+    backplane =
+        new RedisShardBackplane("digest-inserttime-test", o -> o, o -> o, mockJedisClusterFactory);
+    backplane.start("startTime/test:0000");
+    long ttl = 3600L;
+    long expirationInSecs = configs.getBackplane().getCasExpire();
+    when(jedisCluster.ttl("ContentAddressableStorage:abc/0")).thenReturn(ttl);
+
+    Digest digest = Digest.newBuilder().setHash("abc").build();
+
+    Long insertTimeInSecs = backplane.getDigestInsertTime(digest);
+
+    // Assuming there could be at most 2s delay in execution of both
+    // `Instant.now().getEpochSecond()` call.
+    assertThat(insertTimeInSecs)
+        .isGreaterThan(Instant.now().getEpochSecond() - expirationInSecs + ttl - 2);
+    assertThat(insertTimeInSecs).isAtMost(Instant.now().getEpochSecond() - expirationInSecs + ttl);
+  }
+
+  @Test
+  public void testAddWorker() throws IOException {
+    ShardWorker shardWorker =
+        ShardWorker.newBuilder().setWorkerType(3).setFirstRegisteredAt(1703065913000L).build();
+    JedisCluster jedisCluster = mock(JedisCluster.class);
+    when(mockJedisClusterFactory.get()).thenReturn(jedisCluster);
+    when(jedisCluster.hset(anyString(), anyString(), anyString())).thenReturn(1L);
+    backplane =
+            new RedisShardBackplane("digest-inserttime-test", o -> o, o -> o, mockJedisClusterFactory);
+    backplane.start("addWorker/test:0000");
+    backplane.addWorker(shardWorker);
+    verify(jedisCluster, times(1))
+        .hset(
+            configs.getBackplane().getWorkersHashName() + "_storage",
+            "",
+            JsonFormat.printer().print(shardWorker));
+    verify(jedisCluster, times(1))
+        .hset(
+            configs.getBackplane().getWorkersHashName() + "_execute",
+            "",
+            JsonFormat.printer().print(shardWorker));
+    verify(jedisCluster, times(1)).publish(anyString(), anyString());
   }
 }
