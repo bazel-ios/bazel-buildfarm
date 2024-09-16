@@ -1180,6 +1180,9 @@ public abstract class AbstractServerInstance implements Instance {
       } else {
         Directory directory = directoriesIndex.get(inputRootDigest);
         for (String segment : workingDirectory.split("/")) {
+          if (segment.equals(".")) {
+            continue;
+          }
           Directory nextDirectory = directory;
           // linear for now
           for (DirectoryNode dirNode : directory.getDirectoriesList()) {

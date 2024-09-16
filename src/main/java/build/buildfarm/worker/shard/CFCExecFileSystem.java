@@ -142,7 +142,8 @@ class CFCExecFileSystem implements ExecFileSystem {
   }
 
   @Override
-  public void stop() {
+  public void stop() throws InterruptedException {
+    fileCache.stop();
     if (!shutdownAndAwaitTermination(fetchService, 1, MINUTES)) {
       log.log(Level.SEVERE, "could not terminate fetchService");
     }
@@ -374,6 +375,8 @@ class CFCExecFileSystem implements ExecFileSystem {
     ImmutableList.Builder<String> inputFiles = new ImmutableList.Builder<>();
     ImmutableList.Builder<Digest> inputDirectories = new ImmutableList.Builder<>();
 
+    log.log(
+        Level.FINER, "ExecFileSystem::createExecDir(" + operationName + ") calling fetchInputs");
     // Get lock keys so we can increment them prior to downloading
     // and no other threads can to create/delete during
     // eviction or the invocation of fetchInputs
@@ -440,7 +443,7 @@ class CFCExecFileSystem implements ExecFileSystem {
     rootInputDirectories.put(execDir, inputDirectories.build());
 
     log.log(
-        Level.FINE,
+        Level.FINER,
         "ExecFileSystem::createExecDir(" + operationName + ") stamping output directories");
     boolean stamped = false;
     try {
