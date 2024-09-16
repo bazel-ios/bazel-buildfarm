@@ -53,7 +53,7 @@ public class PipelineTest {
           public void run() {}
         },
         1);
-    pipeline.start(null);
+    pipeline.start();
     pipeline.join();
   }
 
@@ -68,7 +68,7 @@ public class PipelineTest {
           }
         },
         1);
-    pipeline.start(null);
+    pipeline.start();
     pipeline.join();
   }
 }
