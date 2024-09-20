@@ -44,14 +44,7 @@ public class Pipeline {
     stageClosePriorities.put(stage, closePriority);
   }
 
-  /**
-   * Start the pipeline.
-   *
-   * <p>You can provide callback which is invoked when any stage has an uncaught exception, for
-   * instance to shutdown the worker gracefully
-   */
-  public void start(SettableFuture<Void> uncaughtExceptionFuture) {
-    stageThreadGroup.setUncaughtExceptionFuture(uncaughtExceptionFuture);
+  public void start() {
     for (Thread stageThread : stageThreads.values()) {
       stageThread.start();
     }
