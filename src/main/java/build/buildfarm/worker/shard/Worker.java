@@ -184,7 +184,7 @@ public final class Worker extends LoggingMain {
     }
   }
 
-  private Worker() {
+  public Worker() {
     super("BuildFarmShardWorker");
   }
 
