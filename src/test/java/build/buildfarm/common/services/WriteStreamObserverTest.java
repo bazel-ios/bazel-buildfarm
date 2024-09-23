@@ -115,6 +115,7 @@ public class WriteStreamObserverTest {
     when(instance.getBlobWrite(
             eq(Compressor.Value.IDENTITY),
             eq(cancelledDigest),
+            eq(DigestFunction.Value.UNKNOWN),
             eq(uuid),
             any(RequestMetadata.class)))
         .thenReturn(write);
@@ -132,11 +133,12 @@ public class WriteStreamObserverTest {
     context.cancel(new RuntimeException("Cancelled by test"));
     future.setException(new IOException("test cancel"));
 
-    verify(write, times(1)).isComplete();
+    verify(write, times(2)).isComplete();
     verify(instance, times(1))
         .getBlobWrite(
             eq(Compressor.Value.IDENTITY),
             eq(cancelledDigest),
+            eq(DigestFunction.Value.UNKNOWN),
             eq(uuid),
             any(RequestMetadata.class));
     verifyZeroInteractions(responseObserver);
