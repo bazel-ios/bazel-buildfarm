@@ -4,8 +4,6 @@ java_library(
     plugins = ["//src/main/java/build/buildfarm/common:lombok"],
     visibility = ["//visibility:public"],
     deps = [
-        "//src/main/java/build/buildfarm/admin",
-        "//src/main/java/build/buildfarm/admin/aws",
         "//src/main/java/build/buildfarm/backplane",
         "//src/main/java/build/buildfarm/cas",
         "//src/main/java/build/buildfarm/common",
@@ -23,6 +21,8 @@ java_library(
         "//src/main/protobuf:build_buildfarm_v1test_buildfarm_java_grpc",
         "//src/main/protobuf:build_buildfarm_v1test_buildfarm_java_proto",
         "@googleapis//:google_rpc_error_details_java_proto",
+        "@io_grpc_grpc_proto//:health_java_proto",
+        "@io_grpc_grpc_proto//:health_proto",
         "@maven//:com_github_ben_manes_caffeine_caffeine",
         "@maven//:com_github_pcj_google_options",
         "@maven//:com_google_code_findbugs_jsr305",
@@ -38,10 +38,5 @@ java_library(
         "@maven//:io_prometheus_simpleclient",
         "@maven//:javax_annotation_javax_annotation_api",
         "@maven//:org_projectlombok_lombok",
-        "@maven//:org_springframework_boot_spring_boot",
-        "@maven//:org_springframework_boot_spring_boot_autoconfigure",
-        "@maven//:org_springframework_spring_beans",
-        "@maven//:org_springframework_spring_context",
-        "@maven//:org_springframework_spring_core",
     ],
 )
