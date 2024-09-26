@@ -142,7 +142,7 @@ public final class Worker extends LoggingMain {
   private LoadingCache<String, Instance> workerStubs;
   private AtomicBoolean released = new AtomicBoolean(true);
 
-  private Worker() {
+  public Worker() {
     super("BuildFarmShardWorker");
   }
 
