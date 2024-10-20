@@ -767,7 +767,6 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       log.log(Level.FINER, format("put: %s", key));
       OutputStream out =
           putImpl(
-              Compressor.Value.IDENTITY,
               key,
               UUID.randomUUID(),
               () -> completeWrite(blob.getDigest()),
@@ -916,6 +915,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
             try {
               if (out != null) {
                 out.cancel();
+                out = null;
               }
             } catch (IOException e) {
               log.log(
@@ -1016,7 +1016,6 @@ public abstract class CASFileCache implements ContentAddressableStorage {
             UniqueWriteOutputStream uniqueOut =
                 createUniqueWriteOutput(
                     out,
-                    key.getCompressor(),
                     key.getDigest(),
                     UUID.fromString(key.getIdentifier()),
                     cancelled -> {
@@ -1028,7 +1027,15 @@ public abstract class CASFileCache implements ContentAddressableStorage {
                     this::isComplete,
                     isReset);
             commitOpenState(uniqueOut.delegate(), outClosedFuture);
-            return uniqueOut;
+            switch (key.getCompressor()) {
+              case IDENTITY:
+                return uniqueOut;
+              case ZSTD:
+                return new ZstdDecompressingOutputStream(uniqueOut);
+              default:
+                throw new UnsupportedOperationException(
+                    "Unsupported compressor " + key.getCompressor());
+            }
           }
 
           private synchronized void syncNotify() {
@@ -1062,7 +1069,6 @@ public abstract class CASFileCache implements ContentAddressableStorage {
 
   UniqueWriteOutputStream createUniqueWriteOutput(
       CancellableOutputStream out,
-      Compressor.Value compressor,
       Digest digest,
       UUID uuid,
       Consumer<Boolean> onClosed,
@@ -1070,7 +1076,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       boolean isReset)
       throws IOException {
     if (out == null) {
-      out = newOutput(compressor, digest, uuid, isComplete, isReset);
+      out = newOutput(digest, uuid, isComplete, isReset);
     }
     if (out == null) {
       // duplicate output stream
@@ -1099,19 +1105,13 @@ public abstract class CASFileCache implements ContentAddressableStorage {
   }
 
   CancellableOutputStream newOutput(
-      Compressor.Value compressor,
-      Digest digest,
-      UUID uuid,
-      BooleanSupplier isComplete,
-      boolean isReset)
-      throws IOException {
+      Digest digest, UUID uuid, BooleanSupplier isComplete, boolean isReset) throws IOException {
     String key = getKey(digest, false);
     final CancellableOutputStream cancellableOut;
     try {
       log.log(Level.FINER, format("getWrite: %s", key));
       cancellableOut =
           putImpl(
-              compressor,
               key,
               uuid,
               () -> completeWrite(digest),
@@ -2637,7 +2637,6 @@ public abstract class CASFileCache implements ContentAddressableStorage {
     String key = getKey(digest, isExecutable);
     CancellableOutputStream out =
         putImpl(
-            Compressor.Value.IDENTITY, // first place to try internal compression
             key,
             UUID.randomUUID(),
             () -> completeWrite(digest),
@@ -2755,7 +2754,6 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       };
 
   private CancellableOutputStream putImpl(
-      Compressor.Value compressor,
       String key,
       UUID writeId,
       Supplier<Boolean> writeWinner,
@@ -2766,7 +2764,6 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       throws IOException, InterruptedException {
     CancellableOutputStream out =
         putOrReference(
-            compressor,
             key,
             writeId,
             writeWinner,
@@ -2872,7 +2869,6 @@ public abstract class CASFileCache implements ContentAddressableStorage {
   }
 
   private CancellableOutputStream putOrReference(
-      Compressor.Value compressor,
       String key,
       UUID writeId,
       Supplier<Boolean> writeWinner,
@@ -2885,7 +2881,6 @@ public abstract class CASFileCache implements ContentAddressableStorage {
     try {
       CancellableOutputStream out =
           putOrReferenceGuarded(
-              compressor,
               key,
               writeId,
               writeWinner,
@@ -3045,7 +3040,6 @@ public abstract class CASFileCache implements ContentAddressableStorage {
   }
 
   private CancellableOutputStream putOrReferenceGuarded(
-      Compressor.Value compressor,
       String key,
       UUID writeId,
       Supplier<Boolean> writeWinner,
@@ -3086,21 +3080,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
     }
     Supplier<String> hashSupplier = () -> hashOut.hash().toString();
     CountingOutputStream countingOut = new CountingOutputStream(committedSize, hashOut);
-    OutputStream out;
-    boolean direct;
-    switch (compressor) {
-      case IDENTITY:
-        out = countingOut;
-        direct = true;
-        break;
-      case ZSTD:
-        out = new ZstdDecompressingOutputStream(countingOut);
-        direct = false;
-        break;
-      default:
-        throw new UnsupportedOperationException("Unsupported compressor " + compressor);
-    }
-    return new CancellableOutputStream(out) {
+    return new CancellableOutputStream(countingOut) {
       final Digest expectedDigest = keyToDigest(key, blobSizeInBytes, digestUtil);
 
       @Override
@@ -3116,7 +3096,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
         } catch (IOException e) {
           // technically no harm no foul
         }
-        return countingOut.written();
+        return getWritten();
       }
 
       @Override
@@ -3151,15 +3131,11 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       @Override
       public void write(byte[] b, int off, int len) throws IOException {
         long written = getWritten();
-        if (direct && written + len > blobSizeInBytes) {
+        if (written + len > blobSizeInBytes) {
           throw new IOException(
               format("attempted overwrite at %d by %d bytes for %s", written, len, writeKey));
         }
         out.write(b, off, len);
-        if (!direct && getWritten() > blobSizeInBytes) {
-          throw new IOException(
-              format("overwrite at %d by %d bytes for %s", written, len, writeKey));
-        }
       }
 
       @Override

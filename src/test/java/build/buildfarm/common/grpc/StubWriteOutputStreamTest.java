@@ -24,6 +24,7 @@ import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.google.bytestream.ByteStreamGrpc;
 import com.google.bytestream.ByteStreamGrpc.ByteStreamImplBase;
@@ -191,5 +192,40 @@ public class StubWriteOutputStreamTest {
       callbackTimedOut = true;
     }
     assertThat(callbackTimedOut).isTrue();
+  }
+
+  @Test
+  public void getOutputOffsetMatchesCommittedSize() {
+    StreamObserver<WriteRequest> writeObserver = mock(StreamObserver.class);
+    serviceRegistry.addService(
+        new ByteStreamImplBase() {
+          @Override
+          public void queryWriteStatus(
+              QueryWriteStatusRequest request,
+              StreamObserver<QueryWriteStatusResponse> responseObserver) {
+            responseObserver.onNext(
+                QueryWriteStatusResponse.newBuilder().setCommittedSize(20).build());
+            responseObserver.onCompleted();
+          }
+
+          @Override
+          public StreamObserver<WriteRequest> write(
+              StreamObserver<WriteResponse> responseObserver) {
+            return writeObserver;
+          }
+        });
+    String resourceName = "resumed-resource";
+    StubWriteOutputStream write =
+        new StubWriteOutputStream(
+            Suppliers.ofInstance(ByteStreamGrpc.newBlockingStub(channel)),
+            Suppliers.ofInstance(ByteStreamGrpc.newStub(channel)),
+            resourceName,
+            e -> e,
+            /* expectedSize= */ 40,
+            /* autoflush= */ false);
+
+    write.getOutput(20, 1, SECONDS, () -> {});
+    assertThat(write.getCommittedSize()).isEqualTo(20);
+    verifyNoInteractions(writeObserver);
   }
 }

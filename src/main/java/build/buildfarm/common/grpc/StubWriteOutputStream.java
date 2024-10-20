@@ -103,7 +103,8 @@ public class StubWriteOutputStream extends FeedbackOutputStream implements Write
           });
 
   private boolean sentResourceName = false;
-  private int offset = 0;
+  private int bufferOffset = 0;
+  private long offset = 0;
   private long writtenBytes = 0;
 
   @GuardedBy("this")
@@ -134,13 +135,13 @@ public class StubWriteOutputStream extends FeedbackOutputStream implements Write
   public void close() throws IOException {
     if (!checkComplete()) {
       boolean finishWrite = expectedSize == UNLIMITED_EXPECTED_SIZE;
-      if (finishWrite || offset != 0) {
+      if (finishWrite || bufferOffset != 0) {
         initiateWrite();
         flushSome(finishWrite);
       }
       synchronized (this) {
         if (writeObserver != null) {
-          if (finishWrite || getCommittedSize() + offset == expectedSize) {
+          if (finishWrite || getCommittedSize() + bufferOffset == expectedSize) {
             writeObserver.onCompleted();
           } else {
             writeObserver.onError(Status.CANCELLED.asException());
@@ -155,7 +156,7 @@ public class StubWriteOutputStream extends FeedbackOutputStream implements Write
     WriteRequest.Builder request =
         WriteRequest.newBuilder()
             .setWriteOffset(getCommittedSize())
-            .setData(ByteString.copyFrom(buf, 0, offset))
+            .setData(ByteString.copyFrom(buf, 0, bufferOffset))
             .setFinishWrite(finishWrite);
     if (!sentResourceName) {
       request.setResourceName(resourceName);
@@ -166,8 +167,8 @@ public class StubWriteOutputStream extends FeedbackOutputStream implements Write
       if (writeObserver != null) {
         writeObserver.onNext(request.build());
         wasReset = false;
-        writtenBytes += offset;
-        offset = 0;
+        writtenBytes += bufferOffset;
+        bufferOffset = 0;
         sentResourceName = true;
       } else {
         checkState(writeFuture.isDone(), "writeObserver nulled without completion");
@@ -177,9 +178,9 @@ public class StubWriteOutputStream extends FeedbackOutputStream implements Write
 
   @Override
   public void flush() throws IOException {
-    if (!checkComplete() && offset != 0) {
+    if (!checkComplete() && bufferOffset != 0) {
       initiateWrite();
-      flushSome(getCommittedSize() + offset == expectedSize);
+      flushSome(getCommittedSize() + bufferOffset == expectedSize);
     }
   }
 
@@ -234,6 +235,16 @@ public class StubWriteOutputStream extends FeedbackOutputStream implements Write
 
                     @Override
                     public void onError(Throwable t) {
+                      if (Status.fromThrowable(t).getCode() != Code.CANCELLED) {
+                        log.log(
+                            WARNING,
+                            format(
+                                "%s: write(%s) on worker %s after %d bytes of content",
+                                Status.fromThrowable(t).getCode().name(),
+                                resourceName,
+                                bsStub.get().getChannel().authority(),
+                                getCommittedSize()));
+                      }
                       writeFuture.setException(exceptionTranslator.apply(t));
                     }
 
@@ -252,18 +263,18 @@ public class StubWriteOutputStream extends FeedbackOutputStream implements Write
     if (isComplete()) {
       throw new WriteCompleteException();
     }
-    if (getCommittedSize() + offset + len > expectedSize) {
+    if (getCommittedSize() + bufferOffset + len > expectedSize) {
       throw new IndexOutOfBoundsException("write would exceed expected size");
     }
     boolean lastFlushed = false;
     while (len > 0 && !checkComplete()) {
       lastFlushed = false;
-      int copyLen = Math.min(buf.length - offset, len);
-      System.arraycopy(b, off, buf, offset, copyLen);
-      offset += copyLen;
+      int copyLen = Math.min(buf.length - bufferOffset, len);
+      System.arraycopy(b, off, buf, bufferOffset, copyLen);
+      bufferOffset += copyLen;
       off += copyLen;
       len -= copyLen;
-      if (offset == buf.length || getCommittedSize() + offset == expectedSize) {
+      if (bufferOffset == buf.length || getCommittedSize() + bufferOffset == expectedSize) {
         flush();
         lastFlushed = true;
       }
@@ -279,8 +290,8 @@ public class StubWriteOutputStream extends FeedbackOutputStream implements Write
       throw new WriteCompleteException();
     }
     if (!checkComplete()) {
-      buf[offset++] = (byte) b;
-      if (autoflush || offset == buf.length) {
+      buf[bufferOffset++] = (byte) b;
+      if (autoflush || bufferOffset == buf.length) {
         flush();
       }
     }
@@ -333,6 +344,9 @@ public class StubWriteOutputStream extends FeedbackOutputStream implements Write
     this.deadlineAfter = deadlineAfter;
     this.deadlineAfterUnits = deadlineAfterUnits;
     this.onReadyHandler = onReadyHandler;
+    this.bufferOffset = 0;
+    writtenBytes = 0;
+    wasReset = true;
     synchronized (this) {
       if (writeObserver == null) {
         initiateWrite();
@@ -351,8 +365,9 @@ public class StubWriteOutputStream extends FeedbackOutputStream implements Write
   public void reset() {
     if (!writeFuture.isDone()) {
       wasReset = true;
-      offset = 0;
+      bufferOffset = 0;
       writtenBytes = 0;
+      offset = 0;
     }
   }
 
