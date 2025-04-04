@@ -94,10 +94,8 @@ import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import javax.naming.ConfigurationException;
 import lombok.extern.java.Log;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.ComponentScan;
 
 @Log
@@ -145,7 +143,6 @@ public class Worker {
   private Backplane backplane;
   private LoadingCache<String, Instance> workerStubs;
 
-  @Autowired private ApplicationContext springContext;
   /**
    * The method will prepare the worker for graceful shutdown when the worker is ready. Note on
    * using stderr here instead of log. By the time this is called in PreDestroy, the log is no
@@ -192,43 +189,6 @@ public class Worker {
                     : "gracefully shutdown but still cannot finish all actions"));
       }
     }
-  }
-
-  private void exitPostPipelineFailure() {
-    // Shutdown the worker if a pipeline fails. By means of the spring lifecycle
-    // hooks - e.g. the `PreDestroy` hook here - it will attempt to gracefully
-    // spin down the pipeline
-
-    // By calling these spring shutdown facilities; we're open to the risk that
-    // a subsystem may be hanging a criticial thread indeffinitly. Deadline the
-    // shutdown workflow to ensure we don't leave a zombie worker in this
-    // situation
-    ScheduledExecutorService shutdownDeadlineExecutor = newSingleThreadScheduledExecutor();
-
-    // This may be shorter than the action timeout; assume we have interrupted
-    // actions in a fatal uncaught exception.
-    int forceShutdownDeadline = 60;
-    ScheduledFuture<?> termFuture =
-        shutdownDeadlineExecutor.schedule(
-            new Runnable() {
-              public void run() {
-                log.log(
-                    Level.SEVERE,
-                    String.format(
-                        "Force terminating due to shutdown deadline exceeded (%d seconds)",
-                        forceShutdownDeadline));
-                System.exit(1);
-              }
-            },
-            forceShutdownDeadline,
-            SECONDS);
-
-    // Consider defining exit codes to better afford out of band instance
-    // recovery
-    int code = SpringApplication.exit(springContext, () -> 1);
-    termFuture.cancel(false);
-    shutdownDeadlineExecutor.shutdown();
-    System.exit(code);
   }
 
   private Operation stripOperation(Operation operation) {
@@ -667,12 +627,7 @@ public class Worker {
     PrometheusPublisher.startHttpServer(configs.getPrometheusPort());
     startFailsafeRegistration();
 
-    // Listen for pipeline unhandled exceptions
-    ExecutorService pipelineExceptionExecutor = newSingleThreadExecutor();
-    SettableFuture<Void> pipelineExceptionFuture = SettableFuture.create();
-    pipelineExceptionFuture.addListener(this::exitPostPipelineFailure, pipelineExceptionExecutor);
-
-    pipeline.start(pipelineExceptionFuture);
+    pipeline.start();
 
     healthCheckMetric.labels("start").inc();
     executionSlotsTotal.set(configs.getWorker().getExecuteStageWidth());
