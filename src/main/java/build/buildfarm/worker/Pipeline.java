@@ -44,14 +44,7 @@ public class Pipeline {
     stageClosePriorities.put(stage, closePriority);
   }
 
-  /**
-   * Start the pipeline.
-   *
-   * <p>You can provide callback which is invoked when any stage has an uncaught exception, for
-   * instance to shutdown the worker gracefully
-   */
-  public void start(SettableFuture<Void> uncaughtExceptionFuture) {
-    stageThreadGroup.setUncaughtExceptionFuture(uncaughtExceptionFuture);
+  public void start() {
     for (Thread stageThread : stageThreads.values()) {
       stageThread.start();
     }
@@ -70,9 +63,12 @@ public class Pipeline {
 
   /** Inform MatchStage to stop matching or picking up new Operations from queue. */
   public void stopMatchingOperations() {
-    for (PipelineStage stage : stageClosePriorities.keySet()) {
+    for (Map.Entry<PipelineStage, Thread> entry : stageThreads.entrySet()) {
+      PipelineStage stage = entry.getKey();
       if (stage instanceof MatchStage) {
-        ((MatchStage) stage).prepareForGracefulShutdown();
+        MatchStage matchStage = (MatchStage) stage;
+        matchStage.prepareForGracefulShutdown();
+        entry.getValue().interrupt();
         return;
       }
     }
@@ -143,15 +139,17 @@ public class Pipeline {
             }
           }
           if (stageToClose != null && !stageToClose.isClosed()) {
-            log.log(Level.FINER, "Closing stage at priority " + maxPriority);
+            log.log(Level.FINER, "Closing stage " + stageToClose + " at priority " + maxPriority);
             stageToClose.close();
           }
         }
+        boolean longStageWait = !closeStage;
         for (Map.Entry<PipelineStage, Thread> stageThread : stageThreads.entrySet()) {
           PipelineStage stage = stageThread.getKey();
           Thread thread = stageThread.getValue();
           try {
-            thread.join(closeStage ? 1 : 1000);
+            // 0 is wait forever, no instant wait
+            thread.join(longStageWait ? 1000 : 1);
           } catch (InterruptedException e) {
             if (!closeStage) {
               synchronized (this) {
@@ -181,8 +179,8 @@ public class Pipeline {
                     + stageClosePriorities.get(stage));
             thread.interrupt();
           }
+          longStageWait = false;
         }
-        closeStage = false;
         for (PipelineStage stage : inactiveStages) {
           synchronized (this) {
             stageThreads.remove(stage);

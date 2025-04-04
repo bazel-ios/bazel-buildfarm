@@ -47,6 +47,7 @@ import static net.javacrumbs.futureconverter.java8guava.FutureConverter.toListen
 import build.bazel.remote.execution.v2.Action;
 import build.bazel.remote.execution.v2.ActionResult;
 import build.bazel.remote.execution.v2.BatchReadBlobsResponse.Response;
+import build.bazel.remote.execution.v2.CacheCapabilities;
 import build.bazel.remote.execution.v2.Command;
 import build.bazel.remote.execution.v2.Compressor;
 import build.bazel.remote.execution.v2.Digest;
@@ -61,6 +62,7 @@ import build.bazel.remote.execution.v2.Platform;
 import build.bazel.remote.execution.v2.Platform.Property;
 import build.bazel.remote.execution.v2.RequestMetadata;
 import build.bazel.remote.execution.v2.ResultsCachePolicy;
+import build.bazel.remote.execution.v2.SymlinkAbsolutePathStrategy;
 import build.buildfarm.actioncache.ActionCache;
 import build.buildfarm.actioncache.ShardActionCache;
 import build.buildfarm.backplane.Backplane;
@@ -80,7 +82,7 @@ import build.buildfarm.common.config.BuildfarmConfigs;
 import build.buildfarm.common.grpc.UniformDelegateServerCallStreamObserver;
 import build.buildfarm.instance.Instance;
 import build.buildfarm.instance.MatchListener;
-import build.buildfarm.instance.server.AbstractServerInstance;
+import build.buildfarm.instance.server.NodeInstance;
 import build.buildfarm.operations.EnrichedOperation;
 import build.buildfarm.operations.FindOperationsResults;
 import build.buildfarm.v1test.BackplaneStatus;
@@ -136,10 +138,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.time.Instant;
+import java.util.AbstractMap;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -168,7 +172,7 @@ import javax.naming.ConfigurationException;
 import lombok.extern.java.Log;
 
 @Log
-public class ShardInstance extends AbstractServerInstance {
+public class ServerInstance extends NodeInstance {
   private static final ListenableFuture<Void> IMMEDIATE_VOID_FUTURE = Futures.immediateFuture(null);
 
   private static final String TIMEOUT_OUT_OF_BOUNDS =
@@ -257,13 +261,17 @@ public class ShardInstance extends AbstractServerInstance {
   private static Backplane createBackplane(String identifier) throws ConfigurationException {
     if (configs.getBackplane().getType().equals(SHARD)) {
       return new RedisShardBackplane(
-          identifier, ShardInstance::stripOperation, ShardInstance::stripQueuedOperation);
+          identifier,
+          /* subscribeToBackplane=*/ true,
+          configs.getServer().isRunFailsafeOperation(),
+          ServerInstance::stripOperation,
+          ServerInstance::stripQueuedOperation);
     } else {
       throw new IllegalArgumentException("Shard Backplane not set in config");
     }
   }
 
-  public ShardInstance(String name, String identifier, DigestUtil digestUtil, Runnable onStop)
+  public ServerInstance(String name, String identifier, DigestUtil digestUtil, Runnable onStop)
       throws InterruptedException, ConfigurationException {
     this(
         name,
@@ -273,7 +281,7 @@ public class ShardInstance extends AbstractServerInstance {
         /* actionCacheFetchService=*/ BuildfarmExecutors.getActionCacheFetchServicePool());
   }
 
-  private ShardInstance(
+  private ServerInstance(
       String name,
       DigestUtil digestUtil,
       Backplane backplane,
@@ -325,7 +333,7 @@ public class ShardInstance extends AbstractServerInstance {
             .build();
   }
 
-  public ShardInstance(
+  public ServerInstance(
       String name,
       DigestUtil digestUtil,
       Backplane backplane,
@@ -572,10 +580,12 @@ public class ShardInstance extends AbstractServerInstance {
     stopping = true;
     log.log(Level.FINER, format("Instance %s is stopping", getName()));
     if (operationQueuer != null) {
-      operationQueuer.stop();
+      operationQueuer.interrupt();
+      operationQueuer.join();
     }
     if (dispatchedMonitor != null) {
       dispatchedMonitor.interrupt();
+      dispatchedMonitor.join();
     }
     if (prometheusMetricsThread != null) {
       prometheusMetricsThread.interrupt();
@@ -656,7 +666,7 @@ public class ShardInstance extends AbstractServerInstance {
     }
 
     if (configs.getServer().isFindMissingBlobsViaBackplane()) {
-      return findMissingBlobsViaBackplane(nonEmptyDigests);
+      return findMissingBlobsViaBackplane(nonEmptyDigests, requestMetadata);
     }
 
     return findMissingBlobsQueryingEachWorker(nonEmptyDigests, requestMetadata);
@@ -723,24 +733,40 @@ public class ShardInstance extends AbstractServerInstance {
   // out-of-date and the server lies about which blobs are actually present. We provide this
   // alternative strategy for calculating missing blobs.
   private ListenableFuture<Iterable<Digest>> findMissingBlobsViaBackplane(
-      Iterable<Digest> nonEmptyDigests) {
+      Iterable<Digest> nonEmptyDigests, RequestMetadata requestMetadata) {
     try {
       Set<Digest> uniqueDigests = new HashSet<>();
       nonEmptyDigests.forEach(uniqueDigests::add);
       Map<Digest, Set<String>> foundBlobs = backplane.getBlobDigestsWorkers(uniqueDigests);
       Set<String> workerSet = backplane.getStorageWorkers();
       Map<String, Long> workersStartTime = backplane.getWorkersStartTimeInEpochSecs(workerSet);
-      return immediateFuture(
+      Map<Digest, Set<String>> digestAndWorkersMap =
           uniqueDigests.stream()
-              .filter( // best effort to present digests only missing on active workers
+              .map(
                   digest -> {
                     Set<String> initialWorkers =
                         foundBlobs.getOrDefault(digest, Collections.emptySet());
-                    return filterAndAdjustWorkersForDigest(
-                            digest, initialWorkers, workerSet, workersStartTime)
-                        .isEmpty();
+                    return new AbstractMap.SimpleEntry<>(
+                        digest,
+                        filterAndAdjustWorkersForDigest(
+                            digest, initialWorkers, workerSet, workersStartTime));
                   })
-              .collect(Collectors.toList()));
+              .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+      ListenableFuture<Iterable<Digest>> missingDigestFuture =
+          immediateFuture(
+              digestAndWorkersMap.entrySet().stream()
+                  .filter(entry -> entry.getValue().isEmpty())
+                  .map(Map.Entry::getKey)
+                  .collect(Collectors.toList()));
+      return transformAsync(
+          missingDigestFuture,
+          (missingDigest) -> {
+            extendLeaseForDigests(digestAndWorkersMap, requestMetadata);
+            return immediateFuture(missingDigest);
+          },
+          // Propagate context values but don't cascade its cancellation for downstream calls.
+          Context.current().fork().fixedContextExecutor(directExecutor()));
     } catch (Exception e) {
       log.log(Level.SEVERE, "find missing blob via backplane failed", e);
       return immediateFailedFuture(Status.fromThrowable(e).asException());
@@ -783,6 +809,29 @@ public class ShardInstance extends AbstractServerInstance {
       }
     }
     return workersStartedBeforeDigestInsertion;
+  }
+
+  private void extendLeaseForDigests(
+      Map<Digest, Set<String>> digestAndWorkersMap, RequestMetadata requestMetadata) {
+    Map<String, Set<Digest>> workerAndDigestMap = new HashMap<>();
+    digestAndWorkersMap.forEach(
+        (digest, workers) ->
+            workers.forEach(
+                worker ->
+                    workerAndDigestMap.computeIfAbsent(worker, w -> new HashSet<>()).add(digest)));
+
+    workerAndDigestMap.forEach(
+        (worker, digests) -> workerStub(worker).findMissingBlobs(digests, requestMetadata));
+
+    try {
+      backplane.updateDigestsExpiry(digestAndWorkersMap.keySet());
+    } catch (IOException e) {
+      log.log(
+          Level.WARNING,
+          format(
+              "Failed to update expiry duration for digests (%s) insertion time",
+              digestAndWorkersMap.keySet()));
+    }
   }
 
   private void findMissingBlobsOnWorker(
@@ -1082,7 +1131,7 @@ public class ShardInstance extends AbstractServerInstance {
                           backplane,
                           workerSet,
                           locationSet,
-                          ShardInstance.this::workerStub,
+                          ServerInstance.this::workerStub,
                           blobDigest,
                           directExecutor(),
                           RequestMetadata.getDefaultInstance()),
@@ -2285,7 +2334,7 @@ public class ShardInstance extends AbstractServerInstance {
             log.log(
                 Level.FINER,
                 format(
-                    "ShardInstance(%s): checkCache(%s): %sus elapsed",
+                    "ServerInstance(%s): checkCache(%s): %sus elapsed",
                     getName(), operation.getName(), checkCacheUSecs));
             return IMMEDIATE_VOID_FUTURE;
           }
@@ -2312,7 +2361,7 @@ public class ShardInstance extends AbstractServerInstance {
     log.log(
         Level.FINER,
         format(
-            "ShardInstance(%s): queue(%s): fetching action %s",
+            "ServerInstance(%s): queue(%s): fetching action %s",
             getName(), operation.getName(), actionDigest.getHash()));
     RequestMetadata requestMetadata = executeEntry.getRequestMetadata();
     ListenableFuture<Action> actionFuture =
@@ -2355,7 +2404,7 @@ public class ShardInstance extends AbstractServerInstance {
               log.log(
                   Level.FINER,
                   format(
-                      "ShardInstance(%s): queue(%s): fetched action %s transforming queuedOperation",
+                      "ServerInstance(%s): queue(%s): fetched action %s transforming queuedOperation",
                       getName(), operation.getName(), actionDigest.getHash()));
               Stopwatch transformStopwatch = Stopwatch.createStarted();
               return transform(
@@ -2385,7 +2434,7 @@ public class ShardInstance extends AbstractServerInstance {
               log.log(
                   Level.FINER,
                   format(
-                      "ShardInstance(%s): queue(%s): queuedOperation %s transformed, validating",
+                      "ServerInstance(%s): queue(%s): queuedOperation %s transformed, validating",
                       getName(),
                       operation.getName(),
                       DigestUtil.toString(
@@ -2407,7 +2456,7 @@ public class ShardInstance extends AbstractServerInstance {
               log.log(
                   Level.FINER,
                   format(
-                      "ShardInstance(%s): queue(%s): queuedOperation %s validated, uploading",
+                      "ServerInstance(%s): queue(%s): queuedOperation %s validated, uploading",
                       getName(),
                       operation.getName(),
                       DigestUtil.toString(
@@ -2459,7 +2508,7 @@ public class ShardInstance extends AbstractServerInstance {
               log.log(
                   Level.FINER,
                   format(
-                      "ShardInstance(%s): queue(%s): %dus checkCache, %dus transform, %dus validate, %dus upload, %dus queue, %dus elapsed",
+                      "ServerInstance(%s): queue(%s): %dus checkCache, %dus transform, %dus validate, %dus upload, %dus queue, %dus elapsed",
                       getName(),
                       queueOperation.getName(),
                       checkCacheUSecs,
@@ -2761,5 +2810,17 @@ public class ShardInstance extends AbstractServerInstance {
       return false;
     }
     return backplane.isBlacklisted(requestMetadata);
+  }
+
+  @Override
+  protected CacheCapabilities getCacheCapabilities() {
+    SymlinkAbsolutePathStrategy.Value symlinkAbsolutePathStrategy =
+        configs.isAllowSymlinkTargetAbsolute()
+            ? SymlinkAbsolutePathStrategy.Value.ALLOWED
+            : SymlinkAbsolutePathStrategy.Value.DISALLOWED;
+    return super.getCacheCapabilities()
+        .toBuilder()
+        .setSymlinkAbsolutePathStrategy(symlinkAbsolutePathStrategy)
+        .build();
   }
 }

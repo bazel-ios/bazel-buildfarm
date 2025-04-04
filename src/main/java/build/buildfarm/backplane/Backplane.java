@@ -282,4 +282,7 @@ public interface Backplane {
   Boolean propertiesEligibleForQueue(List<Platform.Property> provisions);
 
   GetClientStartTimeResult getClientStartTime(GetClientStartTimeRequest request) throws IOException;
+
+  /** Set expiry time for digests */
+  void updateDigestsExpiry(Iterable<Digest> digests) throws IOException;
 }
