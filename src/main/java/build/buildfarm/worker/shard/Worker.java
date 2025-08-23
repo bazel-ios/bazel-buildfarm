@@ -42,6 +42,7 @@ import build.buildfarm.common.config.Cas;
 import build.buildfarm.common.config.GrpcMetrics;
 import build.buildfarm.common.grpc.Retrier;
 import build.buildfarm.common.grpc.Retrier.Backoff;
+import build.buildfarm.common.grpc.TracingMetadataUtils.ServerHeadersInterceptor;
 import build.buildfarm.common.services.ByteStreamService;
 import build.buildfarm.common.services.ContentAddressableStorageService;
 import build.buildfarm.instance.Instance;
@@ -276,6 +277,7 @@ public class Worker {
               storage, inputFetchStage, executeActionStage, context, completeStage, backplane));
     }
     GrpcMetrics.handleGrpcMetricIntercepts(serverBuilder, configs.getWorker().getGrpcMetrics());
+    serverBuilder.intercept(new ServerHeadersInterceptor());
 
     return serverBuilder.build();
   }
