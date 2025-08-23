@@ -96,7 +96,7 @@ def buildfarm_init(name = "buildfarm"):
                         "com.google.errorprone:error_prone_annotations:2.9.0",
                         "com.google.errorprone:error_prone_core:0.92",
                         "com.google.guava:failureaccess:1.0.1",
-                        "com.google.guava:guava:31.1-jre",
+                        "com.google.guava:guava:32.1.1-jre",
                         "com.google.j2objc:j2objc-annotations:1.1",
                         "com.google.jimfs:jimfs:1.1",
                         "com.google.protobuf:protobuf-java-util:3.10.0",
@@ -139,8 +139,8 @@ def buildfarm_init(name = "buildfarm"):
                     ],
         generate_compat_repositories = True,
         repositories = [
-            "https://repo.maven.apache.org/maven2",
-            "https://jcenter.bintray.com",
+            "https://repo1.maven.org/maven2",
+            "https://mirrors.ibiblio.org/pub/mirrors/maven2",
         ],
     )
 
