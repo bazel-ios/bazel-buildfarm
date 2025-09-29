@@ -173,7 +173,12 @@ public class JedisCasWorkerMap implements CasWorkerMap {
   @Override
   public String getAny(RedisClient client, Digest blobDigest) throws IOException {
     String key = redisCasKey(blobDigest);
-    return client.call(jedis -> jedis.srandmember(key));
+    return client.call(
+      jedis -> {
+        // TODO: Cherry-pick https://github.com/buildfarm/buildfarm/pull/2307 after upgrading Jedis to 5.2
+        jedis.expire(key, keyExpiration_s);
+        return jedis.srandmember(key);
+      });
   }
 
   /**
@@ -187,7 +192,12 @@ public class JedisCasWorkerMap implements CasWorkerMap {
   @Override
   public Set<String> get(RedisClient client, Digest blobDigest) throws IOException {
     String key = redisCasKey(blobDigest);
-    return client.call(jedis -> jedis.smembers(key));
+    return client.call(
+      jedis -> {
+        // TODO: Cherry-pick https://github.com/buildfarm/buildfarm/pull/2307 after upgrading Jedis to 5.2
+        jedis.expire(key, keyExpiration_s);
+        return jedis.smembers(key);
+      });
   }
 
   @Override

@@ -847,7 +847,12 @@ public class RedisShardBackplane implements Backplane {
   @SuppressWarnings("ConstantConditions")
   @Override
   public ActionResult getActionResult(ActionKey actionKey) throws IOException {
-    String json = client.call(jedis -> state.actionCache.get(jedis, asDigestStr(actionKey)));
+    // TODO: Cherry-pick https://github.com/buildfarm/buildfarm/pull/2307 after upgrading Jedis to 5.2
+    String json =
+        client.call(
+            jedis ->
+                state.actionCache.getex(
+                    jedis, asDigestStr(actionKey), configs.getBackplane().getActionCacheExpire()));
     if (json == null) {
       return null;
     }
