@@ -151,6 +151,25 @@ public class RedisMap {
   }
 
   /**
+   * @brief Get the value of the key and update expiration.
+   * @details If the key does not exist, null is returned.
+   * @param jedis Jedis cluster client.
+   * @param key The name of the key.
+   * @return The value of the key. null if key does not exist.
+   * @note Overloaded.
+   * @note Suggested return identifier: value.
+   */
+  public String getex(JedisCluster jedis, String key, int timeout_s) {
+    // TODO: Cherry-pick https://github.com/buildfarm/buildfarm/pull/2307 after upgrading Jedis to 5.2
+    String keyName = createKeyName(key);
+    String value = jedis.get(keyName);
+    if (value != null) {
+      jedis.expire(keyName, timeout_s);
+    }
+    return value;
+  }
+
+  /**
    * @brief Get the values of the keys.
    * @details If the key does not exist, null is returned.
    * @param jedis Jedis cluster client.

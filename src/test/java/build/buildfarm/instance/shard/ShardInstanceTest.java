@@ -31,9 +31,13 @@ import static com.google.common.util.concurrent.MoreExecutors.newDirectExecutorS
 import static java.util.concurrent.Executors.newSingleThreadExecutor;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.mockito.AdditionalAnswers.answer;
+import static org.mockito.ArgumentMatchers.anyIterable;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.atMost;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
@@ -81,6 +85,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.longrunning.Operation;
 import com.google.protobuf.Any;
@@ -96,6 +101,7 @@ import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -1114,8 +1120,12 @@ public class ShardInstanceTest {
     buildfarmConfigs.getServer().setFindMissingBlobsViaBackplane(true);
     Set<String> activeAndImposterWorkers =
         Sets.newHashSet(Iterables.concat(activeWorkers, imposterWorkers));
+
     when(mockBackplane.getStorageWorkers()).thenReturn(activeAndImposterWorkers);
     when(mockBackplane.getBlobDigestsWorkers(any(Iterable.class))).thenReturn(digestAndWorkersMap);
+    when(mockInstanceLoader.load(anyString())).thenReturn(mockWorkerInstance);
+    when(mockWorkerInstance.findMissingBlobs(anyIterable(), any(RequestMetadata.class)))
+        .thenReturn(Futures.immediateFuture(new ArrayList<>()));
 
     long serverStartTime = 1686951033L; // june 15th, 2023
     Map<String, Long> workersStartTime = new HashMap<>();
@@ -1138,6 +1148,10 @@ public class ShardInstanceTest {
         Iterables.concat(missingDigests, digestAvailableOnImposters);
 
     assertThat(actualMissingDigests).containsExactlyElementsIn(expectedMissingDigests);
+    verify(mockWorkerInstance, atMost(3))
+        .findMissingBlobs(anyIterable(), any(RequestMetadata.class));
+    verify(mockWorkerInstance, atLeast(1))
+        .findMissingBlobs(anyIterable(), any(RequestMetadata.class));
 
     for (Digest digest : actualMissingDigests) {
       assertThat(digest).isNotIn(availableDigests);
