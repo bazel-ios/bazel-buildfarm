@@ -674,7 +674,7 @@ public final class Worker extends LoggingMain {
     awaitRelease();
   }
 
-  private void awaitTermination() throws InterruptedException {
+  public void awaitTermination() throws InterruptedException {
     pipeline.join();
     server.awaitTermination();
   }
