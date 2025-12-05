@@ -1,10 +1,10 @@
-load("//:jvm_flags.bzl", "ensure_accurate_metadata")
+load("//:jvm_flags.bzl", "add_opens_sun_nio_fs", "ensure_accurate_metadata")
 
 java_test(
     name = "tests",
     size = "small",
     srcs = glob(["*.java"]),
-    jvm_flags = ensure_accurate_metadata(),
+    jvm_flags = ensure_accurate_metadata() + add_opens_sun_nio_fs(),
     test_class = "build.buildfarm.AllTests",
     deps = [
         "//src/main/java/build/buildfarm/common",
@@ -13,6 +13,7 @@ java_test(
         "//third_party/jedis",
         "@googleapis//:google_bytestream_bytestream_java_proto",
         "@googleapis//:google_rpc_error_details_java_proto",
+        "@maven//:com_github_luben_zstd_jni",
         "@maven//:com_google_guava_guava",
         "@maven//:com_google_jimfs_jimfs",
         "@maven//:com_google_protobuf_protobuf_java",
