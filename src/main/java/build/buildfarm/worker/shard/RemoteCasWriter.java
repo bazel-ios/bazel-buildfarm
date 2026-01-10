@@ -16,7 +16,7 @@ package build.buildfarm.worker.shard;
 
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 import static java.lang.String.format;
-import static java.util.concurrent.TimeUnit.DAYS;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 import build.bazel.remote.execution.v2.Compressor;
 import build.bazel.remote.execution.v2.Digest;
@@ -34,6 +34,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import com.google.protobuf.ByteString;
 import io.grpc.Status;
+import io.grpc.StatusException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -71,7 +72,7 @@ public class RemoteCasWriter implements CasWriter {
   private void insertFileToCasMember(Digest digest, DigestFunction.Value digestFunction, Path file)
       throws IOException, InterruptedException {
     try (InputStream in = Files.newInputStream(file)) {
-      retrier.execute(() -> writeToCasMember(digest, digestFunction, in));
+      retrier.execute(() -> writeToCasMember(digest, file, digestFunction, in));
     } catch (RetryException e) {
       Throwable cause = e.getCause();
       Throwables.throwIfInstanceOf(cause, IOException.class);
@@ -80,20 +81,25 @@ public class RemoteCasWriter implements CasWriter {
     }
   }
 
-  private long writeToCasMember(Digest digest, DigestFunction.Value digestFunction, InputStream in)
-      throws IOException, InterruptedException {
+  private long writeToCasMember(Digest digest, Path file, DigestFunction.Value digestFunction, InputStream in)
+      throws IOException, InterruptedException, StatusException {
     // create a write for inserting into another CAS member.
     String workerName = getRandomWorker();
+    if (file != null) {
+      log.info(String.format("Upload file %s (size: %d) to worker %s", file.toString(), digest.getSizeBytes(), workerName));
+    }
     Write write = getCasMemberWrite(digest, digestFunction, workerName);
 
     try {
       return streamIntoWriteFuture(in, write, digest).get();
     } catch (ExecutionException e) {
+      log.log(Level.WARNING, "Failed to write to remote CAS", e);
       Throwable cause = e.getCause();
       Throwables.throwIfInstanceOf(cause, IOException.class);
       // prevent a discard of this frame
+      // Let Retrier handle the StatusException and retry with a different worker
       Status status = Status.fromThrowable(cause);
-      throw new IOException(status.asException());
+      throw status.asException();
     }
   }
 
@@ -113,7 +119,7 @@ public class RemoteCasWriter implements CasWriter {
   public void insertBlob(Digest digest, DigestFunction.Value digestFunction, ByteString content)
       throws IOException, InterruptedException {
     try (InputStream in = content.newInput()) {
-      retrier.execute(() -> writeToCasMember(digest, digestFunction, in));
+      retrier.execute(() -> writeToCasMember(digest, null, digestFunction, in));
     } catch (RetryException e) {
       Throwable cause = e.getCause();
       Throwables.throwIfInstanceOf(cause, IOException.class);
@@ -153,14 +159,18 @@ public class RemoteCasWriter implements CasWriter {
     SettableFuture<Long> writtenFuture = SettableFuture.create();
     int chunkSizeBytes = (int) Size.kbToBytes(128);
 
+    // Set the write deadline to 30s if the digest is smaller than 1MB.
+    // Otherwise, set it to 60s.
+    long deadlineAfter = digest.getSizeBytes() < 1000000 ? 30 : 60;
+
     // The following callback is performed each time the write stream is ready.
     // For each callback we only transfer a small part of the input stream in order to avoid
     // accumulating a large buffer.  When the file is done being transfered,
     // the callback closes the stream and prepares the future.
     FeedbackOutputStream out =
         write.getOutput(
-            /* deadlineAfter=*/ 1,
-            /* deadlineAfterUnits=*/ DAYS,
+            deadlineAfter,
+            /* deadlineAfterUnits=*/ SECONDS,
             () -> {
               try {
                 FeedbackOutputStream outStream = (FeedbackOutputStream) write;
