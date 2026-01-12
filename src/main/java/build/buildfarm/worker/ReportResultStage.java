@@ -76,7 +76,7 @@ public class ReportResultStage extends PipelineStage {
         operationContext.queueEntry,
         EXECUTING,
         this::cancelTick,
-        Deadline.after(60, SECONDS));
+        Deadline.after(120, SECONDS));
     try {
       return reportPolled(operationContext);
     } finally {

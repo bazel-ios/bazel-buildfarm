@@ -245,7 +245,7 @@ class ShardWorkerContext implements WorkerContext {
           return success;
         },
         () -> {
-          log.log(Level.FINE, format("%s: poller: Deadline expired for %s", name, operationName));
+          log.log(Level.INFO, format("%s: poller: Deadline expired for %s", name, operationName));
           onFailure.run();
         },
         deadline);
