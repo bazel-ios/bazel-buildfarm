@@ -174,7 +174,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
   private final ExecutorService expireService;
   private Thread prometheusMetricsThread;
   private final LRUDB db = new TextLRUDB();
-  private volatile Deadline saveLRUAfter = Deadline.after(10, MINUTES);
+  private volatile Deadline saveLRUAfter = Deadline.after(60, MINUTES);
   private final Path lru;
 
   private final Map<Digest, DirectoryEntry> directoryStorage = Maps.newConcurrentMap();
@@ -491,7 +491,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
           try {
             saveLRU();
           } finally {
-            saveLRUAfter = Deadline.after(10, MINUTES);
+            saveLRUAfter = Deadline.after(60, MINUTES);
           }
         });
   }
