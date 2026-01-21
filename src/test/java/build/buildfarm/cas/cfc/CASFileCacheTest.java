@@ -459,7 +459,9 @@ class CASFileCacheTest {
   }
 
   @Test
-  public void containsRecordsAccess() throws IOException, InterruptedException {
+  public void containsRecordsAccess() throws Exception {
+    fileCache.start(false).get();
+
     ByteString contentOne = ByteString.copyFromUtf8("one");
     Digest digestOne = DIGEST_UTIL.compute(contentOne);
     blobs.put(digestOne, contentOne);
@@ -475,13 +477,18 @@ class CASFileCacheTest {
     String pathThree =
         fileCache.put(digestThree, /* isExecutable=*/ false).getFileName().toString();
     fileCache.decrementReferences(
-        ImmutableList.of(pathOne, pathTwo, pathThree), ImmutableList.of());
-    /* three -> two -> one */
+        ImmutableList.of(pathOne, pathTwo, pathThree),
+        ImmutableList.of(),
+        DIGEST_UTIL.getDigestFunction());
+    /* sentinel <- three <- two <- one <- sentinel */
     assertThat(storage.get(pathOne).after).isEqualTo(storage.get(pathTwo));
     assertThat(storage.get(pathTwo).after).isEqualTo(storage.get(pathThree));
 
-    /* one -> three -> two */
-    assertThat(fileCache.findMissingBlobs(ImmutableList.of(digestOne))).isEmpty();
+    /* sentinel <- one <- three <- two <- sentinel */
+    assertThat(
+            fileCache.findMissingBlobs(
+                ImmutableList.of(DigestUtil.toDigest(digestOne)), digestOne.getDigestFunction()))
+        .isEmpty();
     assertThat(storage.get(pathTwo).after).isEqualTo(storage.get(pathThree));
     assertThat(storage.get(pathThree).after).isEqualTo(storage.get(pathOne));
   }

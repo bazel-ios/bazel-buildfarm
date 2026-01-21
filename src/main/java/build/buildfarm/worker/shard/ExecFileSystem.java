@@ -30,7 +30,7 @@ public interface ExecFileSystem extends InputStreamFactory {
   void start(Consumer<List<Digest>> onDigests, boolean skipLoad)
       throws IOException, InterruptedException;
 
-  void stop() throws InterruptedException;
+  void stop() throws IOException, InterruptedException;
 
   Path root();
 

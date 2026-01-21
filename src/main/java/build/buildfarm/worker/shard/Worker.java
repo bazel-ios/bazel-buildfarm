@@ -703,7 +703,12 @@ public class Worker {
     inputFetchSlotsTotal.set(0);
     if (execFileSystem != null) {
       log.log(INFO, "Stopping exec filesystem");
-      execFileSystem.stop();
+      try {
+        execFileSystem.stop();
+      } catch (IOException e) {
+        log.log(SEVERE, "error shutting down exec filesystem", e);
+      }
+      execFileSystem = null;
     }
     if (server != null) {
       log.log(INFO, "Shutting down the server");
