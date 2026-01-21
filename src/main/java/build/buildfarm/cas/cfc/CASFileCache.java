@@ -1435,6 +1435,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
   private void deleteInvalidFileContent(List<Path> files, ExecutorService removeDirectoryService) {
     for (Path path : files) {
       try {
+        log.log(Level.INFO, "Delete file: " + path.toString());
         if (Files.isDirectory(path)) {
           Directories.remove(path, fileStore, removeDirectoryService);
         } else {
@@ -1481,7 +1482,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       for (Path file : listDir(branchDir)) {
         // allow migration for digest-y names
         String name = file.getFileName().toString();
-        if (!(isRoot && name.equals(directoriesIndexDbName)) && !name.matches("[0-9a-f]{2}")) {
+        if (!(isRoot && (name.equals(directoriesIndexDbName) || name.equals("lru.txt"))) && !name.matches("[0-9a-f]{2}")) {
           deleteFilesBuilder.add(file);
         }
       }
