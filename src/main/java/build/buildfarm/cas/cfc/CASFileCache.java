@@ -1481,7 +1481,7 @@ public abstract class CASFileCache implements ContentAddressableStorage {
       for (Path file : listDir(branchDir)) {
         // allow migration for digest-y names
         String name = file.getFileName().toString();
-        if (!(isRoot && name.equals(directoriesIndexDbName)) && !name.matches("[0-9a-f]{2}")) {
+        if (!(isRoot && (name.equals(directoriesIndexDbName) || name.equals("lru.txt"))) && !name.matches("[0-9a-f]{2}")) {
           deleteFilesBuilder.add(file);
         }
       }
