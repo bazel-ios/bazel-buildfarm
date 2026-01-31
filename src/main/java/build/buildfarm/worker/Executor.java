@@ -106,7 +106,7 @@ class Executor {
     if (limits.useExecutionPolicies) {
       policies =
           ExecutionPolicies.forPlatform(
-              operationContext.command.getPlatform(), workerContext::getExecutionPolicies);
+              operationContext.queueEntry.getPlatform(), workerContext::getExecutionPolicies);
     }
 
     Operation operation =
