@@ -211,6 +211,8 @@ public class JedisClusterFactory {
   private static JedisPoolConfig createJedisPoolConfig() {
     JedisPoolConfig jedisPoolConfig = new JedisPoolConfig();
     jedisPoolConfig.setMaxTotal(configs.getBackplane().getJedisPoolMaxTotal());
+    jedisPoolConfig.setMaxIdle(configs.getBackplane().getJedisPoolMaxIdle());
+    jedisPoolConfig.setMinIdle(configs.getBackplane().getJedisPoolMinIdle());
     return jedisPoolConfig;
   }
 
