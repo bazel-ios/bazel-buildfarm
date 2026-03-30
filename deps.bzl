@@ -58,6 +58,11 @@ def archive_dependencies(third_party):
             "sha256": "78bf175f9a8fa23cda724bbef52ad9d0d555cdd1122bcb06484b91174f931239",
             "strip_prefix": "grpc-java-1.54.1",
             "urls": ["https://github.com/grpc/grpc-java/archive/v1.54.1.zip"],
+            "patch_args": ["-p1"],
+            "patches": [
+                "%s:grpc-java-12207.patch" % third_party,
+                "%s:grpc-java-12222.patch" % third_party,
+            ],
         },
         {
             "name": "rules_pkg",
