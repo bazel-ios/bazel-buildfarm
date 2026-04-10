@@ -48,6 +48,7 @@ import build.buildfarm.instance.Instance;
 import build.buildfarm.instance.shard.RedisShardBackplane;
 import build.buildfarm.instance.shard.RemoteInputStreamFactory;
 import build.buildfarm.instance.shard.WorkerStubs;
+import build.buildfarm.instance.stub.StubInstance;
 import build.buildfarm.metrics.prometheus.PrometheusPublisher;
 import build.buildfarm.v1test.ShardWorker;
 import build.buildfarm.worker.ExecuteActionStage;
@@ -143,7 +144,7 @@ public class Worker {
   private ExecFileSystem execFileSystem;
   private Pipeline pipeline;
   private Backplane backplane;
-  private LoadingCache<String, Instance> workerStubs;
+  private LoadingCache<String, StubInstance> workerStubs;
 
   @Autowired private ApplicationContext springContext;
   /**

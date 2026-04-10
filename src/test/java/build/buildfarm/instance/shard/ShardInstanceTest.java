@@ -72,6 +72,7 @@ import build.buildfarm.common.Watcher;
 import build.buildfarm.common.Write.NullWrite;
 import build.buildfarm.common.config.BuildfarmConfigs;
 import build.buildfarm.instance.Instance;
+import build.buildfarm.instance.stub.StubInstance;
 import build.buildfarm.v1test.CompletedOperationMetadata;
 import build.buildfarm.v1test.ExecuteEntry;
 import build.buildfarm.v1test.QueueEntry;
@@ -142,9 +143,9 @@ public class ShardInstanceTest {
 
   @Mock private Runnable mockOnStop;
 
-  @Mock private CacheLoader<String, Instance> mockInstanceLoader;
+  @Mock private CacheLoader<String, StubInstance> mockInstanceLoader;
 
-  @Mock Instance mockWorkerInstance;
+  @Mock StubInstance mockWorkerInstance;
 
   @Before
   public void setUp() throws InterruptedException {

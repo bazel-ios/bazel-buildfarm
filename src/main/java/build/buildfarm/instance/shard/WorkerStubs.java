@@ -15,6 +15,7 @@
 package build.buildfarm.instance.shard;
 
 import static build.buildfarm.common.grpc.Channels.createChannel;
+import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 import static com.google.common.util.concurrent.MoreExecutors.listeningDecorator;
 import static java.util.concurrent.Executors.newSingleThreadScheduledExecutor;
 
@@ -26,41 +27,75 @@ import build.buildfarm.instance.stub.StubInstance;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
-import com.google.common.cache.RemovalListener;
 import com.google.common.util.concurrent.ListeningScheduledExecutorService;
+import com.google.common.util.concurrent.SettableFuture;
 import com.google.protobuf.Duration;
+import io.grpc.ConnectivityState;
+import io.grpc.ManagedChannel;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class WorkerStubs {
   private WorkerStubs() {}
 
-  @SuppressWarnings("rawtypes")
-  public static LoadingCache create(DigestUtil digestUtil, Duration timeout) {
+  public static LoadingCache<String, StubInstance> create(DigestUtil digestUtil, Duration timeout) {
     return CacheBuilder.newBuilder()
         .expireAfterAccess(10, TimeUnit.MINUTES)
-        .removalListener(
-            (RemovalListener<String, Instance>)
-                notification -> stopInstance(notification.getValue()))
         .build(
-            new CacheLoader<String, Instance>() {
+            new CacheLoader<String, StubInstance>() {
               @SuppressWarnings("NullableProblems")
               @Override
-              public Instance load(String worker) {
+              public StubInstance load(String worker) {
                 return newStubInstance(worker, digestUtil, timeout);
               }
             });
   }
 
-  private static Instance newStubInstance(String worker, DigestUtil digestUtil, Duration timeout) {
-    return new StubInstance(
-        "",
-        worker,
-        digestUtil,
-        createChannel(worker),
-        createChannel(worker), // separate write channel
-        timeout,
-        newStubRetrier(),
-        newStubRetryService());
+  private static ManagedChannel createMonitoredChannel(
+      String worker, AtomicInteger active, Runnable onAllIdle) {
+    ManagedChannel channel = createChannel(worker);
+    channel.notifyWhenStateChanged(
+        channel.getState(/* requestConnection= */ false),
+        new Runnable() {
+          boolean wasIdle = false;
+
+          @Override
+          public void run() {
+            ConnectivityState state = channel.getState(/* requestConnection= */ false);
+            if (state == ConnectivityState.IDLE) {
+              if (active.decrementAndGet() == 0) {
+                onAllIdle.run();
+              }
+              wasIdle = true;
+            } else if (wasIdle) {
+              wasIdle = false;
+              active.incrementAndGet();
+            }
+            channel.notifyWhenStateChanged(state, this);
+          }
+        });
+    return channel;
+  }
+
+  private static StubInstance newStubInstance(
+      String worker, DigestUtil digestUtil, Duration timeout) {
+    AtomicInteger active = new AtomicInteger(2); // one for each channel
+    SettableFuture<Void> idle = SettableFuture.create();
+    Runnable onAllIdle = () -> idle.set(null);
+    ManagedChannel channel = createMonitoredChannel(worker, active, onAllIdle);
+    ManagedChannel writeChannel = createMonitoredChannel(worker, active, onAllIdle);
+    StubInstance instance =
+        new StubInstance(
+            "",
+            worker,
+            digestUtil,
+            channel,
+            writeChannel, // separate write channel
+            timeout,
+            newStubRetrier(),
+            newStubRetryService());
+    idle.addListener(() -> stopInstance(instance), directExecutor());
+    return instance;
   }
 
   private static Retrier newStubRetrier() {
