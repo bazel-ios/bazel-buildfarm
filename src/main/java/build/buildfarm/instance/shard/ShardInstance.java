@@ -81,6 +81,7 @@ import build.buildfarm.common.grpc.UniformDelegateServerCallStreamObserver;
 import build.buildfarm.instance.Instance;
 import build.buildfarm.instance.MatchListener;
 import build.buildfarm.instance.server.AbstractServerInstance;
+import build.buildfarm.instance.stub.StubInstance;
 import build.buildfarm.operations.EnrichedOperation;
 import build.buildfarm.operations.FindOperationsResults;
 import build.buildfarm.v1test.BackplaneStatus;
@@ -225,7 +226,7 @@ public class ShardInstance extends AbstractServerInstance {
   private final Backplane backplane;
   private final ActionCache actionCache;
   private final RemoteInputStreamFactory remoteInputStreamFactory;
-  private final com.google.common.cache.LoadingCache<String, Instance> workerStubs;
+  private final com.google.common.cache.LoadingCache<String, StubInstance> workerStubs;
   private final Thread dispatchedMonitor;
   private final Duration maxActionTimeout;
   private AsyncCache<Digest, Directory> directoryCache;
@@ -341,7 +342,7 @@ public class ShardInstance extends AbstractServerInstance {
       Duration maxActionTimeout,
       boolean useDenyList,
       Runnable onStop,
-      LoadingCache<String, Instance> workerStubs,
+      LoadingCache<String, StubInstance> workerStubs,
       ListeningExecutorService actionCacheFetchService,
       boolean ensureOutputsPresent) {
     super(
@@ -1279,7 +1280,9 @@ public class ShardInstance extends AbstractServerInstance {
 
   private Instance workerStub(String worker) {
     try {
-      return workerStubs.get(worker);
+      StubInstance stubInstance = workerStubs.get(worker);
+      stubInstance.setOnStopped(() -> workerStubs.invalidate(worker));
+      return stubInstance;
     } catch (ExecutionException e) {
       log.log(Level.SEVERE, "error getting worker stub for " + worker, e);
       throw new IllegalStateException("stub instance creation must not fail");

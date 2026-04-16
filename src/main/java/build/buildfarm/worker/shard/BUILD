@@ -15,6 +15,7 @@ java_library(
         "//src/main/java/build/buildfarm/instance",
         "//src/main/java/build/buildfarm/instance/server",
         "//src/main/java/build/buildfarm/instance/shard",
+        "//src/main/java/build/buildfarm/instance/stub",
         "//src/main/java/build/buildfarm/metrics/prometheus",
         "//src/main/java/build/buildfarm/operations",
         "//src/main/java/build/buildfarm/worker",

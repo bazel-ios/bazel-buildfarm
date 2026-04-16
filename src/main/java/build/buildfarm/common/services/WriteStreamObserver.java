@@ -371,6 +371,7 @@ public class WriteStreamObserver implements StreamObserver<WriteRequest> {
     } else {
       if (offset == 0 && offset != committedSize) {
         write.reset();
+        out = null;
         committedSize = 0;
       }
       if (earliestOffset < 0 || offset < earliestOffset) {
@@ -384,8 +385,12 @@ public class WriteStreamObserver implements StreamObserver<WriteRequest> {
       if (bytesToWrite == 0 || committedSize - offset >= bytesToWrite) {
         requestNextIfReady();
       } else {
-        // constrained to be within bytesToWrite
-        bytesToWrite -= (int) (committedSize - offset);
+        // committed size is nonsense for compressed streams. Uncompressed + Compressed in
+        // sequence
+        if (compressor == Compressor.Value.IDENTITY) {
+          // constrained to be within bytesToWrite
+          bytesToWrite -= (int) (committedSize - offset);
+        }
         int skipBytes = data.size() - bytesToWrite;
         if (skipBytes != 0) {
           data = data.substring(skipBytes);

@@ -28,6 +28,7 @@ import build.buildfarm.common.grpc.Retrier;
 import build.buildfarm.common.grpc.RetryException;
 import build.buildfarm.common.io.FeedbackOutputStream;
 import build.buildfarm.instance.Instance;
+import build.buildfarm.instance.stub.StubInstance;
 import com.google.common.base.Throwables;
 import com.google.common.cache.LoadingCache;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -51,11 +52,11 @@ import lombok.extern.java.Log;
 @Log
 public class RemoteCasWriter implements CasWriter {
   private final Set<String> workerSet;
-  private final LoadingCache<String, Instance> workerStubs;
+  private final LoadingCache<String, StubInstance> workerStubs;
   private final Retrier retrier;
 
   public RemoteCasWriter(
-      Set<String> workerSet, LoadingCache<String, Instance> workerStubs, Retrier retrier) {
+      Set<String> workerSet, LoadingCache<String, StubInstance> workerStubs, Retrier retrier) {
     this.workerSet = workerSet;
     this.workerStubs = workerStubs;
     this.retrier = retrier;
@@ -147,7 +148,9 @@ public class RemoteCasWriter implements CasWriter {
 
   private Instance workerStub(String worker) {
     try {
-      return workerStubs.get(worker);
+      StubInstance stubInstance = workerStubs.get(worker);
+      stubInstance.setOnStopped(() -> workerStubs.invalidate(worker));
+      return stubInstance;
     } catch (ExecutionException e) {
       log.log(Level.SEVERE, "error getting worker stub for " + worker, e.getCause());
       throw new IllegalStateException("stub instance creation must not fail");
