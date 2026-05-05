@@ -40,9 +40,9 @@ RECOMMENDED_JVM_FLAGS = [
     # which can reduce the memory footprint of objects on system.
     "-XX:+UseCompressedOops",
 
-    # Instead of creating a heap dump, exit the JVM when it runs out of memory.
-    # This avoids hitting the disk limit of the container and repeatedly restarting the container.
-    "-XX:+ExitOnOutOfMemoryError",
+    # Do not dump the heap or exit on OOM
+    # It may cause no disk space issue or too many restarts of the container.
+    # "-XX:+HeapDumpOnOutOfMemoryError",
 ]
 
 DEFAULT_LOGGING_CONFIG = ["-Dlogging.config=file:/app/build_buildfarm/src/main/java/build/buildfarm/logging.properties"]
