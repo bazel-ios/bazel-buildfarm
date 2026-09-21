@@ -1636,15 +1636,6 @@ public class ShardInstance extends AbstractServerInstance {
         .build();
   }
 
-  // version specification: low 2.0, high >= 2.2
-  // Servers SHOULD prefer those set [in Action]
-  private Platform queuedOperationPlatform(QueuedOperation queuedOperation) {
-    if (queuedOperation.getAction().hasPlatform()) {
-      return queuedOperation.getAction().getPlatform();
-    }
-    return queuedOperation.getCommand().getPlatform();
-  }
-
   private ListenableFuture<QueuedOperationResult> uploadQueuedOperation(
       QueuedOperation queuedOperation,
       ExecuteEntry executeEntry,
@@ -1663,7 +1654,7 @@ public class ShardInstance extends AbstractServerInstance {
         QueueEntry.newBuilder()
             .setExecuteEntry(executeEntry)
             .setQueuedOperationDigest(queuedOperationDigest)
-            .setPlatform(queuedOperationPlatform(queuedOperation))
+            .setPlatform(queuedOperation.getCommand().getPlatform())
             .build();
     return transform(
         writeBlobFuture(
@@ -2497,7 +2488,7 @@ public class ShardInstance extends AbstractServerInstance {
                     .setExecuteEntry(executeEntry)
                     .setQueuedOperationDigest(queuedOperationMetadata.getQueuedOperationDigest())
                     .setPlatform(
-                        queuedOperationPlatform(profiledQueuedMetadata.getQueuedOperation()))
+                        profiledQueuedMetadata.getQueuedOperation().getCommand().getPlatform())
                     .build();
             try {
               ensureCanQueue(stopwatch);
