@@ -34,6 +34,7 @@ public class Backplane {
   private String operationChannelPrefix = "OperationChannel";
   private String casPrefix = "ContentAddressableStorage";
   private int casExpire = 604800; // 1 Week
+  private int maxInvocationIdTimeout = 604800;
   private boolean subscribeToBackplane = true;
   private boolean runFailsafeOperation = true;
   private int maxQueueDepth = 100000;

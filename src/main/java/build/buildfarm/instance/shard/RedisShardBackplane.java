@@ -1349,7 +1349,7 @@ public class RedisShardBackplane implements Backplane {
   @SuppressWarnings("ConstantConditions")
   @Override
   public void prequeue(ExecuteEntry executeEntry, Operation operation) throws IOException {
-    String invocationId = extractInvocationId(operation);
+    String invocationId = executeEntry.getRequestMetadata().getToolInvocationId();
     String operationName = operation.getName();
     String operationJson = operationPrinter.print(operation);
     String executeEntryJson = JsonFormat.printer().print(executeEntry);
