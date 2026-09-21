@@ -72,8 +72,6 @@ public class WriteStreamObserver implements StreamObserver<WriteRequest> {
   private boolean initialized = false;
   private volatile boolean committed = false;
   private String name = null;
-
-  @GuardedBy("this")
   private Write write = null;
 
   @GuardedBy("this")
@@ -270,8 +268,7 @@ public class WriteStreamObserver implements StreamObserver<WriteRequest> {
 
   private boolean errorResponse(Throwable t) {
     if (exception.compareAndSet(null, t)) {
-      if (Status.fromThrowable(t).getCode() == Status.Code.CANCELLED
-          || Context.current().isCancelled()) {
+      if (Status.fromThrowable(t).getCode() == Status.Code.CANCELLED) {
         return false;
       }
       boolean isEntryLimitException = t instanceof EntryLimitException;
@@ -499,14 +496,7 @@ public class WriteStreamObserver implements StreamObserver<WriteRequest> {
   }
 
   @Override
-  public synchronized void onCompleted() {
+  public void onCompleted() {
     log.log(Level.FINER, format("write completed for %s", name));
-    if (write == null) {
-      // we must return with a response lest we emit a grpc warning
-      // there can be no meaningful response at this point, as we
-      // have no idea what the size was
-      responseObserver.onNext(WriteResponse.getDefaultInstance());
-      responseObserver.onCompleted();
-    }
   }
 }
