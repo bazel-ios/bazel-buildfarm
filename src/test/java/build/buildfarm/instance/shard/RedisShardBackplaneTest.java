@@ -20,11 +20,13 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import build.bazel.remote.execution.v2.Digest;
+import build.bazel.remote.execution.v2.ExecuteOperationMetadata;
 import build.bazel.remote.execution.v2.Platform;
 import build.bazel.remote.execution.v2.RequestMetadata;
 import build.buildfarm.common.config.BuildfarmConfigs;
@@ -38,6 +40,7 @@ import build.buildfarm.v1test.WorkerChange;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.longrunning.Operation;
+import com.google.protobuf.Any;
 import com.google.protobuf.util.JsonFormat;
 import java.io.IOException;
 import java.time.Instant;
@@ -133,6 +136,45 @@ public class RedisShardBackplaneTest {
             configs.getBackplane().getOperationExpire(),
             RedisShardBackplane.operationPrinter.print(op));
     verify(jedisCluster, times(1))
+        .lpush(
+            configs.getBackplane().getPreQueuedOperationsListName(),
+            JsonFormat.printer().print(executeEntry));
+    verifyChangePublished(jedisCluster);
+    verify(jedisCluster, never()).sadd(eq(""), anyString());
+  }
+
+  @Test
+  public void prequeueIndexesInvocationFromExecuteEntry() throws IOException {
+    JedisCluster jedisCluster = mock(JedisCluster.class);
+    when(mockJedisClusterFactory.get()).thenReturn(jedisCluster);
+    when(jedisCluster.sadd("invocation", "op")).thenReturn(1L);
+    backplane =
+        new RedisShardBackplane(
+            "prequeue-invocation-test", (o) -> o, (o) -> o, mockJedisClusterFactory);
+    backplane.start("startTime/test:0000");
+
+    ExecuteEntry executeEntry =
+        ExecuteEntry.newBuilder()
+            .setOperationName("op")
+            .setRequestMetadata(RequestMetadata.newBuilder().setToolInvocationId("invocation"))
+            .build();
+    Operation op =
+        Operation.newBuilder()
+            .setName("op")
+            .setMetadata(Any.pack(ExecuteOperationMetadata.getDefaultInstance()))
+            .build();
+
+    backplane.prequeue(executeEntry, op);
+
+    verify(jedisCluster).sadd("invocation", "op");
+    verify(jedisCluster).expire("invocation", configs.getBackplane().getMaxInvocationIdTimeout());
+    verify(jedisCluster, never()).sadd(eq(""), anyString());
+    verify(jedisCluster)
+        .setex(
+            operationName("op"),
+            configs.getBackplane().getOperationExpire(),
+            RedisShardBackplane.operationPrinter.print(op));
+    verify(jedisCluster)
         .lpush(
             configs.getBackplane().getPreQueuedOperationsListName(),
             JsonFormat.printer().print(executeEntry));
@@ -413,7 +455,7 @@ public class RedisShardBackplaneTest {
     when(mockJedisClusterFactory.get()).thenReturn(jedisCluster);
     when(jedisCluster.hset(anyString(), anyString(), anyString())).thenReturn(1L);
     backplane =
-            new RedisShardBackplane("digest-inserttime-test", o -> o, o -> o, mockJedisClusterFactory);
+        new RedisShardBackplane("digest-inserttime-test", o -> o, o -> o, mockJedisClusterFactory);
     backplane.start("addWorker/test:0000");
     backplane.addWorker(shardWorker);
     verify(jedisCluster, times(1))
