@@ -287,7 +287,11 @@ public class ShardInstance extends AbstractServerInstance {
         digestUtil,
         backplane,
         new ShardActionCache(
-            DEFAULT_MAX_LOCAL_ACTION_CACHE_SIZE, backplane, actionCacheFetchService),
+            DEFAULT_MAX_LOCAL_ACTION_CACHE_SIZE,
+            java.time.Duration.ofSeconds(
+                configs.getServer().getCaches().getActionCacheExpireAfterWriteSeconds()),
+            backplane,
+            actionCacheFetchService),
         configs.getServer().isRunDispatchedMonitor(),
         configs.getServer().getDispatchedMonitorIntervalSeconds(),
         configs.getServer().isRunOperationQueuer(),

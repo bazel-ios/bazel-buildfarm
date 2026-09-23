@@ -25,11 +25,13 @@ import build.buildfarm.common.DigestUtil.ActionKey;
 import com.github.benmanes.caffeine.cache.AsyncCacheLoader;
 import com.github.benmanes.caffeine.cache.AsyncLoadingCache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Ticker;
 import com.google.common.cache.CacheLoader.InvalidCacheLoadException;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import io.grpc.Status;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 
 public class ShardActionCache implements ActionCache {
@@ -38,6 +40,23 @@ public class ShardActionCache implements ActionCache {
 
   public ShardActionCache(
       int maxLocalCacheSize, Backplane backplane, ListeningExecutorService service) {
+    this(maxLocalCacheSize, Duration.ZERO, backplane, service);
+  }
+
+  public ShardActionCache(
+      int maxLocalCacheSize,
+      Duration expireAfterWrite,
+      Backplane backplane,
+      ListeningExecutorService service) {
+    this(maxLocalCacheSize, expireAfterWrite, backplane, service, Ticker.systemTicker());
+  }
+
+  ShardActionCache(
+      int maxLocalCacheSize,
+      Duration expireAfterWrite,
+      Backplane backplane,
+      ListeningExecutorService service,
+      Ticker ticker) {
     this.backplane = backplane;
 
     AsyncCacheLoader<ActionKey, ActionResult> loader =
@@ -51,7 +70,12 @@ public class ShardActionCache implements ActionCache {
                     },
                     executor));
 
-    actionResultCache = Caffeine.newBuilder().maximumSize(maxLocalCacheSize).buildAsync(loader);
+    Caffeine<Object, Object> builder =
+        Caffeine.newBuilder().maximumSize(maxLocalCacheSize).ticker(ticker);
+    if (!expireAfterWrite.isZero()) {
+      builder.expireAfterWrite(expireAfterWrite);
+    }
+    actionResultCache = builder.buildAsync(loader);
   }
 
   @Override

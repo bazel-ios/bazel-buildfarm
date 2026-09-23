@@ -318,7 +318,9 @@ public abstract class AbstractServerInstance implements Instance {
 
   @SuppressWarnings("ConstantConditions")
   protected ListenableFuture<ActionResult> ensureOutputsPresent(
-      ListenableFuture<ActionResult> resultFuture, RequestMetadata requestMetadata) {
+      ListenableFuture<ActionResult> resultFuture,
+      RequestMetadata requestMetadata,
+      Runnable onMissingOutputs) {
     ListenableFuture<Iterable<Digest>> missingOutputsFuture =
         transformAsync(
             resultFuture,
@@ -331,6 +333,7 @@ public abstract class AbstractServerInstance implements Instance {
               if (Iterables.isEmpty(missingOutputs)) {
                 return resultFuture;
               }
+              onMissingOutputs.run();
               return immediateFuture(null);
             },
             directExecutor()));
@@ -369,7 +372,12 @@ public abstract class AbstractServerInstance implements Instance {
       ActionKey actionKey, RequestMetadata requestMetadata) {
     ListenableFuture<ActionResult> result = checkNotNull(actionCache.get(actionKey));
     if (shouldEnsureOutputsPresent(ensureOutputsPresent, requestMetadata)) {
-      result = checkNotNull(ensureOutputsPresent(result, requestMetadata));
+      // Drop the local copy so the next lookup reloads from the backplane instead of repeating
+      // the miss for as long as this server holds the entry.
+      result =
+          checkNotNull(
+              ensureOutputsPresent(
+                  result, requestMetadata, () -> actionCache.invalidate(actionKey)));
     }
     return result;
   }

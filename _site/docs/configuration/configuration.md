@@ -111,6 +111,7 @@ server:
 | commandCacheMaxEntries                  | Long, _64 * 1024_              | The max number of entries that the command cache will hold.    |
 | digestToActionCacheMaxEntries                  | Long, _64 * 1024_              | The max number of entries that the digest-to-action cache will hold.    |
 | recentServedExecutionsCacheMaxEntries                  | Long, _64 * 1024_              | The max number of entries that the executions cache will hold.    |
+| actionCacheExpireAfterWriteSeconds                  | Long, _600_              | Seconds an action result stays in the server's local action cache before it is reloaded from the backplane. 0 disables expiry.    |
 
 Example:
 
@@ -121,6 +122,7 @@ server:
     commandCacheMaxEntries: 10000
     digestToActionCacheMaxEntries: 10000
     recentServedExecutionsCacheMaxEntries: 10000
+    actionCacheExpireAfterWriteSeconds: 600
 ```
 
 ### Admin

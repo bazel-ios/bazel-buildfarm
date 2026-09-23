@@ -29,6 +29,7 @@ import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -41,6 +42,7 @@ import build.bazel.remote.execution.v2.Directory;
 import build.bazel.remote.execution.v2.DirectoryNode;
 import build.bazel.remote.execution.v2.FileNode;
 import build.bazel.remote.execution.v2.OutputDirectory;
+import build.bazel.remote.execution.v2.OutputFile;
 import build.bazel.remote.execution.v2.Platform;
 import build.bazel.remote.execution.v2.RequestMetadata;
 import build.bazel.remote.execution.v2.Tree;
@@ -722,6 +724,55 @@ public class AbstractServerInstanceTest {
     verify(contentAddressableStorage, times(1)).findMissingBlobs(findMissingBlobsCaptor.capture());
     assertThat(findMissingBlobsCaptor.getValue())
         .containsAtLeast(fileDigest, childFileDigest, otherFileDigest);
+  }
+
+  private static final RequestMetadata ENSURE_OUTPUTS_PRESENT_METADATA =
+      RequestMetadata.newBuilder()
+          .setCorrelatedInvocationsId(
+              "https://localhost:12345/test/build?ENSURE_OUTPUTS_PRESENT=true#92af266a-c5bf-48ca-a723-344ae516a786")
+          .build();
+
+  private static ActionResult actionResultWithOutput(Digest outputDigest) {
+    return ActionResult.newBuilder()
+        .addOutputFiles(OutputFile.newBuilder().setPath("out").setDigest(outputDigest))
+        .build();
+  }
+
+  @Test
+  public void missingOutputsInvalidateLocalActionCacheEntry() throws Exception {
+    Digest outputDigest = DIGEST_UTIL.compute(ByteString.copyFromUtf8("missing output"));
+    ContentAddressableStorage contentAddressableStorage = mock(ContentAddressableStorage.class);
+    ActionCache actionCache = mock(ActionCache.class);
+    AbstractServerInstance instance =
+        new DummyServerInstance(contentAddressableStorage, actionCache);
+    ActionKey actionKey =
+        DigestUtil.asActionKey(DIGEST_UTIL.compute(ByteString.copyFromUtf8("action")));
+    when(actionCache.get(actionKey))
+        .thenReturn(immediateFuture(actionResultWithOutput(outputDigest)));
+    when(contentAddressableStorage.findMissingBlobs(any(Iterable.class)))
+        .thenReturn(ImmutableList.of(outputDigest));
+
+    assertThat(instance.getActionResult(actionKey, ENSURE_OUTPUTS_PRESENT_METADATA).get()).isNull();
+    verify(actionCache, times(1)).invalidate(actionKey);
+  }
+
+  @Test
+  public void presentOutputsKeepLocalActionCacheEntry() throws Exception {
+    Digest outputDigest = DIGEST_UTIL.compute(ByteString.copyFromUtf8("present output"));
+    ContentAddressableStorage contentAddressableStorage = mock(ContentAddressableStorage.class);
+    ActionCache actionCache = mock(ActionCache.class);
+    AbstractServerInstance instance =
+        new DummyServerInstance(contentAddressableStorage, actionCache);
+    ActionKey actionKey =
+        DigestUtil.asActionKey(DIGEST_UTIL.compute(ByteString.copyFromUtf8("action")));
+    ActionResult actionResult = actionResultWithOutput(outputDigest);
+    when(actionCache.get(actionKey)).thenReturn(immediateFuture(actionResult));
+    when(contentAddressableStorage.findMissingBlobs(any(Iterable.class)))
+        .thenReturn(ImmutableList.of());
+
+    assertThat(instance.getActionResult(actionKey, ENSURE_OUTPUTS_PRESENT_METADATA).get())
+        .isEqualTo(actionResult);
+    verify(actionCache, never()).invalidate(actionKey);
   }
 
   @Test

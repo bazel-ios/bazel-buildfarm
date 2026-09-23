@@ -52,4 +52,14 @@ public class ServerCacheConfigs {
    * @details This will not dictate the max memory used.
    */
   public long recentServedExecutionsCacheMaxEntries = 64 * 1024;
+
+  /**
+   * @field actionCacheExpireAfterWriteSeconds
+   * @brief How long an action result stays in the server's local action cache before it is reloaded
+   *     from the backplane.
+   * @details Local hits never reach the backplane, so without an expiry each server keeps the
+   *     version it first loaded and the backplane entry's TTL is never refreshed. 0 disables
+   *     expiry.
+   */
+  public long actionCacheExpireAfterWriteSeconds = 600;
 }
