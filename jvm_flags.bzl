@@ -32,6 +32,12 @@ RECOMMENDED_JVM_FLAGS = [
     # which can help reduce memory usage.
     "-XX:+UseStringDeduplication",
 
+    # Mitigates CVE-2026-114938 (java4shell): memory corruption in the AVX-512
+    # Base64 decode intrinsic on x86-64, which is where our servers run.
+    # Disabling the intrinsic falls back to the pure-Java decoder. Remove once
+    # the base image ships a fixed JDK.
+    "-XX:-UseBASE64Intrinsics",
+
     # Do not dump the heap or exit on OOM
     # It may cause no disk space issue or too many restarts of the container.
     # "-XX:+HeapDumpOnOutOfMemoryError",
